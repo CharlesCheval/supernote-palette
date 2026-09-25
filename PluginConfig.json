@@ -1,0 +1,14 @@
+{
+  "name": "Stroke Width",
+  "desc": "Lasso strokes or shapes and set their width to a pen size (0.1–2.0), e.g. after resizing.",
+  "author": "Charles Cheval",
+  "iconPath": "assets/icon_width.png",
+  "versionName": "0.3.0",
+  "versionCode": "3",
+  "pluginID": "jeknef2xva3miqdr",
+  "pluginKey": "StrokeWidth",
+  "jsMainPath": "index",
+  "uses-permissions": [
+    "plugin.permission.FILE:WRITE"
+  ]
+}
