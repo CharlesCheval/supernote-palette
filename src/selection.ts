@@ -16,6 +16,8 @@ export type Summary = {
   others: number;
   /** Current widths, e.g. "0.3" or "0.3–0.8". */
   range: string;
+  /** Raw internal widths of strokes and of shapes, to compare their scales. */
+  raw: string;
   /** Active pen raw width, to check the mm mapping. */
   penWidth: number | null;
   /** False when the change will clear Supernote's undo history. */
@@ -54,6 +56,7 @@ export async function readSummary(): Promise<Summary> {
     shapes: elements.filter(isShape).length,
     others: elements.length - targets.length,
     range: describeRange(targets.map(widthOf)),
+    raw: rawRanges(elements),
     penWidth: ok<{width: number}>(pen)?.width ?? null,
     undoable: true,
     error,
@@ -61,6 +64,28 @@ export async function readSummary(): Promise<Summary> {
   summary.undoable = lassoRoute(summary.strokes, summary.shapes);
   release(elements);
   return summary;
+}
+
+function rawRange(values: number[]): string {
+  const v = values.filter(n => n > 0);
+  if (!v.length) {
+    return '';
+  }
+  const lo = Math.min(...v);
+  const hi = Math.max(...v);
+  return lo === hi ? `${lo}` : `${lo}–${hi}`;
+}
+
+function rawRanges(elements: Element[]): string {
+  const strokes = rawRange(elements.filter(isStroke).map(e => e.thickness));
+  const shapes = rawRange(elements.filter(isShape).map(e => e.geometry!.penWidth));
+  const shapeThickness = rawRange(elements.filter(isShape).map(e => e.thickness));
+  return [
+    strokes && `strokes ${strokes}`,
+    shapes && `shapes ${shapes}${shapeThickness && shapeThickness !== shapes ? ` (element ${shapeThickness})` : ''}`,
+  ]
+    .filter(Boolean)
+    .join(' · ');
 }
 
 let writeGranted = false;

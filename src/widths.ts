@@ -4,9 +4,10 @@
  *
  * The SDK does not document the unit, and it is not linear. These values were
  * read on a Manta (firmware 3.29 beta) by drawing with each pen size.
- * 0.3 and 0.4 are interpolated from the neighbouring steps.
+ * 0.3 and 0.4 are interpolated from the neighbouring steps; 2.5 and 3.0 go beyond
+ * the pen menu and are extrapolated (+600 per 0.5 mm, as from 1.5 to 2.0).
  */
-export const PEN_SIZES: ReadonlyArray<{mm: number; internal: number}> = [
+export const PEN_SIZES: ReadonlyArray<{mm: number; internal: number; extrapolated?: boolean}> = [
   {mm: 0.1, internal: 200},
   {mm: 0.2, internal: 300},
   {mm: 0.3, internal: 400},
@@ -19,7 +20,11 @@ export const PEN_SIZES: ReadonlyArray<{mm: number; internal: number}> = [
   {mm: 1.0, internal: 1200},
   {mm: 1.5, internal: 1800},
   {mm: 2.0, internal: 2400},
+  {mm: 2.5, internal: 3000, extrapolated: true},
+  {mm: 3.0, internal: 3600, extrapolated: true},
 ];
+
+export const isExtrapolated = (mm: number) => !!PEN_SIZES.find(s => s.mm === mm)?.extrapolated;
 
 export const PRESETS_MM = PEN_SIZES.map(s => s.mm);
 

@@ -1,6 +1,6 @@
 {
   "name": "StrokeWidth",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "scripts": {
     "android": "react-native run-android",
@@ -38,7 +38,7 @@
   "engines": {
     "node": ">=18"
   },
-  "description": "Lasso strokes or shapes and set their width to a pen size (0.1–2.0), e.g. after resizing.",
+  "description": "Lasso strokes or shapes and set their width to a pen size (0.1–3.0), e.g. after resizing.",
   "author": "Charles Cheval",
   "license": "MIT",
   "repository": {

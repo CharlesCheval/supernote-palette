@@ -1,6 +1,6 @@
 # Stroke Width — Supernote plugin
 
-Lasso some strokes or shapes, tap **Stroke width** in the lasso toolbar, and pick a pen size (0.1 to 2.0). Every selected stroke and shape takes that width.
+Lasso some strokes or shapes, tap **Stroke width** in the lasso toolbar, and pick a pen size (0.1 to 3.0). Every selected stroke and shape takes that width.
 
 It is handy after resizing a shape or handwriting with the lasso. Text boxes, pictures and links in the selection are left untouched.
 
@@ -17,7 +17,9 @@ The SDK does not document the unit of `thickness` / `penWidth`, and it is not li
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
 | Internal | 200 | 300 | 400* | 500* | 600 | 700 | 900 | 1000 | 1100 | 1200 | 1800 | 2400 |
 
-\* interpolated.
+\* interpolated. The panel also offers **2.5** (3000) and **3.0** (3600), beyond the pen menu, extrapolated from the 1.5→2.0 step.
+
+The panel shows the selection's raw widths (`thickness` for strokes, `penWidth` for shapes) to help compare both scales.
 
 ## How it works
 

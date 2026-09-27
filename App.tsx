@@ -9,7 +9,7 @@ import React, {useCallback, useEffect, useState} from 'react';
 import {DeviceEventEmitter, Pressable, StyleSheet, Text, View} from 'react-native';
 import {PluginManager} from 'sn-plugin-lib';
 import {Summary, applyWidth, readSummary} from './src/selection';
-import {PRESETS_MM, formatMm, toInternal} from './src/widths';
+import {PRESETS_MM, formatMm, isExtrapolated, toInternal} from './src/widths';
 
 export const REFRESH_EVENT = 'strokewidth:refresh';
 
@@ -38,7 +38,16 @@ function App(): React.JSX.Element {
     readSummary()
       .then(setSummary)
       .catch(e =>
-        setSummary({strokes: 0, shapes: 0, others: 0, range: '—', penWidth: null, undoable: false, error: String(e?.message ?? e)}),
+        setSummary({
+          strokes: 0,
+          shapes: 0,
+          others: 0,
+          range: '—',
+          raw: '',
+          penWidth: null,
+          undoable: false,
+          error: String(e?.message ?? e),
+        }),
       );
   }, []);
 
@@ -78,12 +87,14 @@ function App(): React.JSX.Element {
         </Pressable>
       </View>
       <Text style={styles.info}>{describe(summary)}</Text>
+      {summary?.raw ? <Text style={styles.raw}>raw width: {summary.raw}</Text> : null}
 
       <View style={styles.grid}>
         {PRESETS_MM.map(mm => (
           <Pressable key={mm} style={[styles.size, busy && styles.dim]} onPress={() => apply(toInternal(mm))}>
             <View style={[styles.sample, {height: Math.max(2, Math.round(mm * 8))}]} />
             <Text style={styles.sizeText}>{mm.toFixed(1)}</Text>
+            {isExtrapolated(mm) ? <Text style={styles.note}>beyond pen menu</Text> : null}
           </Pressable>
         ))}
       </View>
@@ -110,7 +121,9 @@ const styles = StyleSheet.create({
   header: {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center'},
   title: {fontSize: 30, fontWeight: '700', color: '#000000'},
   close: {padding: 8},
-  info: {fontSize: 20, lineHeight: 30, color: '#000000', marginTop: 12, marginBottom: 24},
+  info: {fontSize: 20, lineHeight: 30, color: '#000000', marginTop: 12, marginBottom: 8},
+  raw: {fontSize: 15, color: '#444444', marginBottom: 20, fontFamily: 'monospace'},
+  note: {fontSize: 13, color: '#444444', marginTop: 2},
   grid: {flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between'},
   size: {
     width: '31%',
