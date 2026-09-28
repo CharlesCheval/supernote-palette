@@ -47,7 +47,6 @@ function App(): React.JSX.Element {
           colors: '—',
           raw: '',
           penWidth: null,
-          undoable: false,
           error: String(e?.message ?? e),
         }),
       );
@@ -88,8 +87,6 @@ function App(): React.JSX.Element {
           <Text style={styles.title}>✕</Text>
         </Pressable>
       </View>
-      <Text style={styles.info}>{describe(summary)}</Text>
-      {summary?.raw ? <Text style={styles.raw}>raw width: {summary.raw}</Text> : null}
 
       <View style={styles.grid}>
         {PRESETS_MM.map(mm => (
@@ -115,11 +112,9 @@ function App(): React.JSX.Element {
         </Pressable>
       ) : null}
 
-      {summary && !summary.error && !summary.undoable ? (
-        <Text style={styles.message}>
-          ⚠ Changing strokes clears Supernote's undo history (only a single shape can be changed undoably).
-        </Text>
-      ) : null}
+      {/* At the bottom: the selection is read asynchronously, so nothing above moves when it arrives. */}
+      <Text style={styles.info}>{describe(summary)}</Text>
+      {summary?.raw ? <Text style={styles.raw}>raw width: {summary.raw}</Text> : null}
 
       {message ? <Text style={styles.message}>{message}</Text> : null}
     </View>
@@ -128,10 +123,10 @@ function App(): React.JSX.Element {
 
 const styles = StyleSheet.create({
   container: {flex: 1, padding: 36, backgroundColor: '#ffffff'},
-  header: {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center'},
+  header: {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20},
   title: {fontSize: 30, fontWeight: '700', color: '#000000'},
   close: {padding: 8},
-  info: {fontSize: 20, lineHeight: 30, color: '#000000', marginTop: 12, marginBottom: 8},
+  info: {fontSize: 20, lineHeight: 30, color: '#000000', marginTop: 24, marginBottom: 8},
   raw: {fontSize: 15, color: '#444444', marginBottom: 20, fontFamily: 'monospace'},
   grid: {flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between'},
   size: {

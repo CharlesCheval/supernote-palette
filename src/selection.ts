@@ -23,8 +23,6 @@ export type Summary = {
   raw: string;
   /** Active pen raw width, to check the mm mapping. */
   penWidth: number | null;
-  /** False when the change will clear Supernote's undo history. */
-  undoable: boolean;
   error?: string;
 };
 
@@ -68,10 +66,8 @@ export async function readSummary(): Promise<Summary> {
     colors: describeColors(targets),
     raw: rawRanges(elements),
     penWidth: ok<{width: number}>(pen)?.width ?? null,
-    undoable: true,
     error,
   };
-  summary.undoable = lassoRoute(summary.strokes, summary.shapes);
   release(elements);
   return summary;
 }

@@ -8,7 +8,7 @@ It is handy after resizing a shape or handwriting with the lasso. Text boxes, pi
 
 The panel also shows:
 
-- **Selection summary:** how many strokes and shapes are selected, and their current width and colours.
+- **Selection summary** (at the bottom): how many strokes and shapes are selected, and their current width and colours.
 - **Match active pen:** applies the width of the pen currently selected in Supernote.
 
 ## Width units
@@ -30,7 +30,7 @@ The panel shows the selection's raw widths (`thickness` for strokes, `penWidth` 
 1. `getLassoElements` reads the selection.
 2. The width or colour is applied by one of two routes:
    - **A single shape:** `getLassoGeometries` + `modifyLassoGeometry`. This is a lasso operation, so Supernote's undo history is kept.
-   - **Anything else (strokes, several shapes):** `thickness` (and `geometry.penWidth` for shapes), or `stroke.penColor` / `geometry.penColor`, is set, then one `modifyPageElements` call applies the change. It needs file write access (**Always allow** on first use). The SDK offers no lasso operation for stroke width or colour, and `modifyPageElements` **clears the undo history**. The panel warns about it before you pick a size.
+   - **Anything else (strokes, several shapes):** `thickness` (and `geometry.penWidth` for shapes), or `stroke.penColor` / `geometry.penColor`, is set, then one `modifyPageElements` call applies the change. It needs file write access (**Always allow** on first use). The SDK offers no lasso operation for stroke width or colour, and `modifyPageElements` **clears the undo history**.
 
 ## Install and build
 
