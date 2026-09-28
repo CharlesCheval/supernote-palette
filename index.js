@@ -18,7 +18,7 @@ PluginManager.init();
 
 PluginManager.registerButton(2, ['NOTE', 'DOC'], {
   id: BUTTON_WIDTH,
-  name: 'Stroke width',
+  name: 'Inkwell',
   icon: Image.resolveAssetSource(require('./assets/icon_width.png')).uri,
   editDataTypes: EDIT_TYPES,
   showType: 1,

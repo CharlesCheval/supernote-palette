@@ -1,7 +1,7 @@
 import {PEN_COLORS, colorName, restyle, restyleGeometry} from '../src/style';
 
 test('the four system colours', () => {
-  expect(PEN_COLORS.map(c => c.value)).toEqual([0x00, 0x9d, 0xc9, 0xfe]);
+  expect(PEN_COLORS.map(c => c.value)).toEqual([0xfe, 0xc9, 0x9d, 0x00]);
   expect(colorName(0x9d)).toBe('Dark gray');
 });
 

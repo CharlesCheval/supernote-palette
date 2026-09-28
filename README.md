@@ -1,6 +1,8 @@
-# Stroke Width — Supernote plugin
+# Inkwell — Supernote plugin
 
-Lasso some strokes or shapes, tap **Stroke width** in the lasso toolbar, and pick a pen size (0.1 to 3.5) or one of the four system colours (black, dark gray, light gray, white). Every selected stroke and shape takes it at once, with no confirmation.
+Formerly **Stroke Width**.
+
+Lasso some strokes or shapes, tap **Inkwell** in the lasso toolbar, and pick a pen size (0.1 to 3.5) or one of the four system colours (white, light gray, dark gray, black). Every selected stroke and shape takes it at once, with no confirmation.
 
 It is handy after resizing a shape or handwriting with the lasso. Text boxes, pictures and links in the selection are left untouched.
 
@@ -33,7 +35,7 @@ The panel shows the selection's raw widths (`thickness` for strokes, `penWidth` 
 ## Install and build
 
 1. Download `StrokeWidth.snplg` from the [latest release](https://github.com/CharlesCheval/supernote-stroke-width/releases/latest) and copy it to the device's `MyStyle` folder (USB, Supernote Partner or Browse & Access).
-2. Open **Settings → Apps → Plugins → Add plugin**.
+2. Open **Settings → Apps → Plugins → Add plugin**. It replaces Stroke Width in place.
 
 ```bash
 npm install

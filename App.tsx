@@ -83,7 +83,7 @@ function App(): React.JSX.Element {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.title}>Width & colour</Text>
+        <Text style={styles.title}>Inkwell</Text>
         <Pressable onPress={() => PluginManager.closePluginView()} style={styles.close}>
           <Text style={styles.title}>✕</Text>
         </Pressable>
