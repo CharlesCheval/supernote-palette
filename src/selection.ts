@@ -1,9 +1,10 @@
 import {Element, PluginCommAPI, PluginManager} from 'sn-plugin-lib';
+import {StyleChange, colorName, restyle, restyleGeometry} from './style';
 import {describeRange} from './widths';
 
 /**
- * Reads the current lasso selection and rewrites the width of its strokes and
- * geometries. Other elements (text boxes, pictures, links…) are left untouched.
+ * Reads the current lasso selection and rewrites the width or the colour of its
+ * strokes and geometries. Other elements (text boxes, pictures, links…) are left untouched.
  *
  * Two routes, because of Supernote's undo history (measured on a Manta):
  * - a single shape: modifyLassoGeometry, a lasso operation, which keeps undo;
@@ -16,6 +17,8 @@ export type Summary = {
   others: number;
   /** Current widths, e.g. "0.3" or "0.3–0.8". */
   range: string;
+  /** Current colours, e.g. "Black" or "Black, Dark gray". */
+  colors: string;
   /** Raw internal widths of strokes and of shapes, to compare their scales. */
   raw: string;
   /** Active pen raw width, to check the mm mapping. */
@@ -39,6 +42,12 @@ function errorText(res: any): string {
 const isStroke = (e: Element) => e.type === Element.TYPE_STROKE;
 const isShape = (e: Element) => e.type === Element.TYPE_GEO && !!e.geometry;
 const widthOf = (e: Element) => (isShape(e) ? e.geometry!.penWidth || e.thickness : e.thickness);
+const colorOf = (e: Element) => (isShape(e) ? e.geometry!.penColor : e.stroke?.penColor);
+
+function describeColors(elements: Element[]): string {
+  const values = [...new Set(elements.map(colorOf).filter((c): c is number => typeof c === 'number'))];
+  return values.length ? values.map(colorName).join(', ') : '—';
+}
 
 async function lassoElements(): Promise<{elements: Element[]; error?: string}> {
   const res: any = await PluginCommAPI.getLassoElements();
@@ -56,6 +65,7 @@ export async function readSummary(): Promise<Summary> {
     shapes: elements.filter(isShape).length,
     others: elements.length - targets.length,
     range: describeRange(targets.map(widthOf)),
+    colors: describeColors(targets),
     raw: rawRanges(elements),
     penWidth: ok<{width: number}>(pen)?.width ?? null,
     undoable: true,
@@ -96,7 +106,7 @@ async function ensureWriteAccess(): Promise<boolean> {
   }
   const permission = 'plugin.permission.FILE:WRITE';
   if ((await PluginManager.hasPermission(permission)) < 1) {
-    const choice = await PluginManager.requestPermission(permission, 'Changing stroke width edits the page.');
+    const choice = await PluginManager.requestPermission(permission, 'Changing width or colour edits the page.');
     if (choice !== 1 && choice !== 2) {
       return false;
     }
@@ -106,27 +116,27 @@ async function ensureWriteAccess(): Promise<boolean> {
 }
 
 /** Lasso route for a single selected shape: keeps the undo history. */
-async function applyToLassoShape(width: number): Promise<{ok: boolean; message: string}> {
+async function applyToLassoShape(change: StyleChange): Promise<{ok: boolean; message: string}> {
   const res: any = await PluginCommAPI.getLassoGeometries();
   const shapes = ok<any[]>(res) ?? [];
   if (shapes.length !== 1) {
     return {ok: false, message: `Could not read the selected shape: ${errorText(res)}`};
   }
-  const shape = {...shapes[0], penWidth: width, showLassoAfterInsert: true};
+  const shape = {...restyleGeometry(shapes[0], change), showLassoAfterInsert: true};
   const mod: any = await PluginCommAPI.modifyLassoGeometry(shape);
   return ok<boolean>(mod)
     ? {ok: true, message: 'Shape updated.'}
-    : {ok: false, message: `Could not change the width: ${errorText(mod)}`};
+    : {ok: false, message: `Could not change the shape: ${errorText(mod)}`};
 }
 
-/** Sets every selected stroke and shape to `width` (internal units). */
-export async function applyWidth(width: number): Promise<{ok: boolean; message: string}> {
+/** Sets the width (internal units) or the colour of every selected stroke and shape. */
+export async function applyStyle(change: StyleChange): Promise<{ok: boolean; message: string}> {
   const summary = await readSummary();
   if (!summary.error && lassoRoute(summary.strokes, summary.shapes)) {
-    return applyToLassoShape(width);
+    return applyToLassoShape(change);
   }
   if (!(await ensureWriteAccess())) {
-    return {ok: false, message: 'File access denied: allow it ("Always allow") to change widths.'};
+    return {ok: false, message: 'File access denied: allow it ("Always allow") to change the selection.'};
   }
   const {elements, error} = await lassoElements();
   if (error) {
@@ -138,10 +148,7 @@ export async function applyWidth(width: number): Promise<{ok: boolean; message: 
     return {ok: false, message: 'The selection has no strokes or shapes.'};
   }
   for (const e of targets) {
-    e.thickness = width;
-    if (isShape(e)) {
-      e.geometry!.penWidth = width;
-    }
+    restyle(e, change);
   }
   const page = ok<number>(await PluginCommAPI.getCurrentPageNum()) ?? targets[0].pageNum;
   // No explicit layer: the host uses the current layer.
@@ -149,7 +156,7 @@ export async function applyWidth(width: number): Promise<{ok: boolean; message: 
   const changed = ok<number[]>(res);
   if (!changed) {
     release(targets);
-    return {ok: false, message: `Could not change the width: ${errorText(res)}`};
+    return {ok: false, message: `Could not change the selection: ${errorText(res)}`};
   }
   // Modified elements stay referenced by the host: they are not recycled here.
   return {ok: true, message: `${changed.length} of ${targets.length} elements updated.`};

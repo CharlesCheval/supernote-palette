@@ -7,6 +7,7 @@ test('pen sizes map to the widths measured on the device', () => {
   expect(toInternal(1.0)).toBe(1200);
   expect(toInternal(2.0)).toBe(2400);
   expect(toInternal(3.0)).toBe(3600);
+  expect(toInternal(3.5)).toBe(4200);
   expect(toInternal(1.25)).toBe(1500); // interpolated
 });
 
