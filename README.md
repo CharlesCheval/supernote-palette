@@ -21,10 +21,6 @@ The SDK does not document the unit of `thickness` / `penWidth`, and it is not li
 
 \* interpolated. The panel also offers **2.5** (3000), **3.0** (3600) and **3.5** (4200), beyond the pen menu, extrapolated from the 1.5→2.0 step.
 
-### Same size, different pens
-
-The same width is not drawn the same by every pen. Four strokes set to 3.5 on a Manta measured: needle point 33.5 px, ink pen 20.4 px (its points carry pressure, which thins the line), marker 32.9 px (drawn diagonally), calligraphy 8.2 px (its width depends on the direction). Sizes in the panel are **needle point** sizes: ink pen strokes are stored ×1.64 so they look the same (`PEN_WIDTH_FACTORS` in `src/widths.ts`), and the summary shows their needle-point equivalent. Marker and calligraphy vary with direction, so they are left at ×1. Shapes carry no pressure and are not scaled.
-
 Colours are the SDK's `penColor` values: `0x00` black, `0x9D` dark gray, `0xC9` light gray, `0xFE` white (`src/style.ts`).
 
 The panel shows the selection's raw widths (`thickness` for strokes, `penWidth` for shapes) to help compare both scales.

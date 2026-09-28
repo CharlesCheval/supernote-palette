@@ -3,8 +3,6 @@
  * element field is set. Pure logic, unit-tested.
  */
 
-import {forPen} from './widths';
-
 /** Supernote's four system colours (SDK: Stroke.penColor / Geometry.penColor), light to dark. */
 export const PEN_COLORS: ReadonlyArray<{value: number; name: string; swatch: string}> = [
   {value: 0xfe, name: 'White', swatch: '#fefefe'},
@@ -18,22 +16,16 @@ export type StyleChange = {width: number} | {color: number};
 /** The fields of an SDK element this module touches. */
 export type Styled = {
   thickness: number;
-  stroke?: {penColor: number; penType: number} | null;
+  stroke?: {penColor: number} | null;
   geometry?: {penWidth: number; penColor: number} | null;
 };
 
-/**
- * Applies the change in place: width → thickness (+ penWidth for shapes), colour → penColor.
- * A width is the needle point one: strokes of thinner-drawing pens get it multiplied
- * (see PEN_WIDTH_FACTORS). Shapes carry no pressure, so they take it as is.
- */
+/** Applies the change in place: width → thickness (+ penWidth for shapes), colour → penColor. */
 export function restyle(e: Styled, change: StyleChange) {
   if ('width' in change) {
+    e.thickness = change.width;
     if (e.geometry) {
-      e.thickness = change.width;
       e.geometry.penWidth = change.width;
-    } else {
-      e.thickness = forPen(change.width, e.stroke?.penType);
     }
     return;
   }

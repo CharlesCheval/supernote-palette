@@ -6,7 +6,7 @@ test('the four system colours', () => {
 });
 
 test('width: stroke thickness, and penWidth for shapes', () => {
-  const stroke = {thickness: 400, stroke: {penColor: 0, penType: 10}};
+  const stroke = {thickness: 400, stroke: {penColor: 0}};
   const shape = {thickness: 400, geometry: {penWidth: 400, penColor: 0}};
   restyle(stroke, {width: 1200});
   restyle(shape, {width: 1200});
@@ -15,11 +15,11 @@ test('width: stroke thickness, and penWidth for shapes', () => {
 });
 
 test('colour: penColor only, width untouched', () => {
-  const stroke = {thickness: 400, stroke: {penColor: 0, penType: 10}};
+  const stroke = {thickness: 400, stroke: {penColor: 0}};
   const shape = {thickness: 600, geometry: {penWidth: 600, penColor: 0}};
   restyle(stroke, {color: 0xc9});
   restyle(shape, {color: 0xc9});
-  expect(stroke).toEqual({thickness: 400, stroke: {penColor: 0xc9, penType: 10}});
+  expect(stroke).toEqual({thickness: 400, stroke: {penColor: 0xc9}});
   expect(shape).toEqual({thickness: 600, geometry: {penWidth: 600, penColor: 0xc9}});
 });
 
@@ -28,16 +28,4 @@ test('lasso geometry copy', () => {
   expect(restyleGeometry(g, {color: 0xfe})).toEqual({penWidth: 600, penColor: 0xfe, type: 'GEO_circle'});
   expect(restyleGeometry(g, {width: 2400}).penWidth).toBe(2400);
   expect(g.penColor).toBe(0);
-});
-
-test('ink pen strokes are widened to look like the needle point; shapes are not', () => {
-  const needle = {thickness: 400, stroke: {penColor: 0, penType: 10}};
-  const ink = {thickness: 400, stroke: {penColor: 0, penType: 16}};
-  const inkShape = {thickness: 400, geometry: {penWidth: 400, penColor: 0, penType: 16}};
-  for (const e of [needle, ink, inkShape]) {
-    restyle(e, {width: 4200});
-  }
-  expect(needle.thickness).toBe(4200);
-  expect(ink.thickness).toBe(6888);
-  expect(inkShape.geometry.penWidth).toBe(4200);
 });

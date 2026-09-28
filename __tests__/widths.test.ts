@@ -1,4 +1,4 @@
-import {PEN_SIZES, asNeedle, describeRange, forPen, formatMm, toInternal} from '../src/widths';
+import {PEN_SIZES, describeRange, formatMm, toInternal} from '../src/widths';
 
 test('pen sizes map to the widths measured on the device', () => {
   expect(toInternal(0.1)).toBe(200);
@@ -22,11 +22,4 @@ test('ranges', () => {
   expect(describeRange([400, 400])).toBe('0.3');
   expect(describeRange([1000, 400, 0])).toBe('0.3–0.8');
   expect(describeRange([])).toBe('—');
-});
-
-test('pen factors round-trip', () => {
-  expect(forPen(1200, 10)).toBe(1200);
-  expect(forPen(1200, undefined)).toBe(1200);
-  expect(forPen(1200, 16)).toBe(1968);
-  expect(asNeedle(1968, 16)).toBe(1200);
 });
