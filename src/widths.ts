@@ -27,6 +27,28 @@ export const PEN_SIZES: ReadonlyArray<{mm: number; internal: number; extrapolate
 
 export const PRESETS_MM = PEN_SIZES.map(s => s.mm);
 
+/**
+ * The same width is not drawn the same by every pen. Measured on a Manta with
+ * four strokes set to 3.5 (4200): needle point 33.5 px, ink pen 20.4 px (its
+ * points carry pressure, which thins the line), marker 32.9 px (diagonal),
+ * calligraphy 8.2 px (varies with direction).
+ * Strokes of these pen types get their width multiplied so that they look like
+ * the needle point at the chosen size. Other pens are left at ×1.
+ * Keys are Stroke.penType values: 1 = pressure pen (SDK), 16 = ink pen (measured).
+ */
+export const PEN_WIDTH_FACTORS: Readonly<Record<number, number>> = {1: 1.64, 16: 1.64};
+
+export const widthFactor = (penType: number | undefined) =>
+  (penType !== undefined && PEN_WIDTH_FACTORS[penType]) || 1;
+
+/** Width to store on a stroke of `penType` so that it looks like the needle point at `internal`. */
+export const forPen = (internal: number, penType: number | undefined) =>
+  Math.round(internal * widthFactor(penType));
+
+/** The needle-point-equivalent width of a stroke of `penType` stored at `stored`. */
+export const asNeedle = (stored: number, penType: number | undefined) =>
+  Math.round(stored / widthFactor(penType));
+
 /** Minimum width accepted by the SDK. */
 export const MIN_INTERNAL = 100;
 

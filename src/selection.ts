@@ -1,6 +1,6 @@
 import {Element, PluginCommAPI, PluginManager} from 'sn-plugin-lib';
 import {StyleChange, colorName, restyle, restyleGeometry} from './style';
-import {describeRange} from './widths';
+import {asNeedle, describeRange} from './widths';
 
 /**
  * Reads the current lasso selection and rewrites the width or the colour of its
@@ -41,7 +41,9 @@ function errorText(res: any): string {
 
 const isStroke = (e: Element) => e.type === Element.TYPE_STROKE;
 const isShape = (e: Element) => e.type === Element.TYPE_GEO && !!e.geometry;
-const widthOf = (e: Element) => (isShape(e) ? e.geometry!.penWidth || e.thickness : e.thickness);
+/** Width as the panel shows it: needle-point equivalent for strokes. */
+const widthOf = (e: Element) =>
+  isShape(e) ? e.geometry!.penWidth || e.thickness : asNeedle(e.thickness, e.stroke?.penType);
 const colorOf = (e: Element) => (isShape(e) ? e.geometry!.penColor : e.stroke?.penColor);
 
 function describeColors(elements: Element[]): string {
