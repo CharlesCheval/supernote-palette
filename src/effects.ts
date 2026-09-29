@@ -20,6 +20,7 @@ import {
   ok,
   release,
 } from './selection';
+import {getSettings} from './settings';
 
 /**
  * Line patterns and fills for the lasso selection. Supernote has no dashed or
@@ -40,12 +41,6 @@ export const HATCHES: FillStyle[] = [
   {hatch: -45, color: 0x9d},
   {hatch: 45, color: 0x9d},
 ];
-
-/**
- * Hatch density in percent: 100% puts the lines a base gap apart (14 px, or
- * 3 line widths for thick pens), 50% twice as far, 10% ten times as far.
- */
-export const HATCH_DENSITY = {min: 10, max: 100, step: 10, initial: 50};
 
 /** Solid fills in the four system colours, light to dark. */
 export const FILLS: FillStyle[] = [
@@ -337,7 +332,7 @@ function fillPlan(fill: FillStyle, outlineWidth: number, density: number) {
 export async function applyFill(
   fill: FillStyle,
   onReady: OnReady = () => {},
-  density = HATCH_DENSITY.initial,
+  density = getSettings().hatchDensity,
 ): Promise<Result> {
   const {all, targets, error} = await selection();
   if (error || !targets.length) {

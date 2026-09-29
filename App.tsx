@@ -16,15 +16,9 @@ import {
 } from 'react-native';
 import {PluginManager} from 'sn-plugin-lib';
 import {Summary, applyStyle, readSummary} from './src/selection';
-import {
-  FILLS,
-  FillStyle,
-  HATCHES,
-  HATCH_DENSITY,
-  applyDashes,
-  applyFill,
-} from './src/effects';
+import {FILLS, FillStyle, HATCHES, applyDashes, applyFill} from './src/effects';
 import {DASH_STYLES, DashStyle} from './src/patterns';
+import {LIMITS, getSettings, subscribe, updateSettings} from './src/settings';
 import {PEN_COLORS, StyleChange} from './src/style';
 import {PRESETS_MM, formatMm, toInternal} from './src/widths';
 
@@ -117,19 +111,16 @@ function FillIcon({fill}: {fill: FillStyle}) {
   );
 }
 
-/** Hatch density chosen in the panel (percent); kept while the plugin runs. */
-let chosenDensity = HATCH_DENSITY.initial;
-
 function App(): React.JSX.Element {
   const [summary, setSummary] = useState<Summary | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
-  const [density, setDensity] = useState(chosenDensity);
-  const changeDensity = (delta: number) => {
-    const {min, max} = HATCH_DENSITY;
-    chosenDensity = Math.min(max, Math.max(min, density + delta));
-    setDensity(chosenDensity);
-  };
+  // Saved settings (hatch density): re-render when they load or change.
+  const [, settingsChanged] = useState(0);
+  useEffect(() => subscribe(() => settingsChanged(n => n + 1)), []);
+  const density = getSettings().hatchDensity;
+  const changeDensity = (delta: number) =>
+    updateSettings({hatchDensity: density + delta});
 
   const refresh = useCallback(() => {
     setMessage('');
@@ -266,13 +257,13 @@ function App(): React.JSX.Element {
         <Text style={styles.sectionLabel}>Density</Text>
         <Pressable
           style={[styles.tool, styles.small]}
-          onPress={() => changeDensity(-HATCH_DENSITY.step)}>
+          onPress={() => changeDensity(-LIMITS.hatchDensity.step)}>
           <Text style={styles.stepText}>−</Text>
         </Pressable>
         <Text style={styles.density}>{density} %</Text>
         <Pressable
           style={[styles.tool, styles.small]}
-          onPress={() => changeDensity(HATCH_DENSITY.step)}>
+          onPress={() => changeDensity(LIMITS.hatchDensity.step)}>
           <Text style={styles.stepText}>+</Text>
         </Pressable>
       </View>

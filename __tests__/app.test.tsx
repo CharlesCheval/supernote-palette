@@ -5,7 +5,8 @@ jest.mock('sn-plugin-lib', () => ({
     getPenInfo: jest.fn(async () => ({success: true, result: {type: 10, color: 0, width: 600}})),
     recycleElement: jest.fn(),
   },
-  PluginManager: {closePluginView: jest.fn()},
+  PluginManager: {closePluginView: jest.fn(), getPluginDirPath: jest.fn(async () => null)},
+  FileUtils: {},
   PointUtils: {},
 }));
 import React from 'react';

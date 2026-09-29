@@ -7,6 +7,7 @@ import App, {REFRESH_EVENT} from './App';
 import {name as appName} from './app.json';
 
 import {PluginManager} from 'sn-plugin-lib';
+import {loadSettings} from './src/settings';
 
 const BUTTON_WIDTH = 301;
 /** Lasso toolbar button shown when the selection holds strokes (0) or shapes (5). */
@@ -15,6 +16,7 @@ const EDIT_TYPES = [0, 5];
 AppRegistry.registerComponent(appName, () => App);
 
 PluginManager.init();
+loadSettings();
 
 PluginManager.registerButton(2, ['NOTE', 'DOC'], {
   id: BUTTON_WIDTH,
