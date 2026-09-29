@@ -30,7 +30,22 @@ import {
  * - hatching and fills are ADDED inside each closed stroke / shape, which stays.
  */
 
-export type FillStyle = 'hatch' | 'cross' | 'gray' | 'solid';
+/** Hatching at ±45° (drawn in dark gray), or a solid fill in one of the system colours. */
+export type FillStyle = {hatch: -45 | 45} | {color: number};
+
+export const FILLS: FillStyle[] = [
+  {hatch: -45},
+  {hatch: 45},
+  {color: 0xfe},
+  {color: 0xc9},
+  {color: 0x9d},
+  {color: 0x00},
+];
+
+const HATCH_COLOR = 0x9d;
+
+/** Called once the selection is read: the panel can close while the page is edited. */
+type OnReady = () => void;
 
 type Result = {ok: boolean; message: string};
 type Style = {penType: number; penColor: number; penWidth: number};
@@ -63,10 +78,12 @@ async function outlineOf(
       (g.type === 'GEO_circle' || g.type === 'GEO_ellipse') &&
       g.ellipseCenterPoint
     ) {
+      // Read back from the page, the "radius" fields hold twice the drawn radius
+      // (measured on a Manta: hatching came out twice too wide), unlike insertGeometry.
       const pts = ellipsePoints(
         g.ellipseCenterPoint,
-        g.ellipseMajorAxisRadius,
-        g.ellipseMinorAxisRadius,
+        g.ellipseMajorAxisRadius / 2,
+        g.ellipseMinorAxisRadius / 2,
         g.ellipseAngle,
       );
       return {points: pts, style};
@@ -208,7 +225,10 @@ async function dashShapes(
 }
 
 /** Makes every selected stroke and shape dashed. */
-export async function applyDashes(dash: DashStyle): Promise<Result> {
+export async function applyDashes(
+  dash: DashStyle,
+  onReady: OnReady = () => {},
+): Promise<Result> {
   const {all, targets, error} = await selection();
   if (error || !targets.length) {
     release(all);
@@ -225,6 +245,7 @@ export async function applyDashes(dash: DashStyle): Promise<Result> {
         'File access denied: allow it ("Always allow") to change the selection.',
     };
   }
+  onReady();
   const size = await pageSize();
   const strokes = targets.filter(isStroke);
   const shapes = targets.filter(isShape);
@@ -252,7 +273,7 @@ export async function applyDashes(dash: DashStyle): Promise<Result> {
 
 /** Hatching / fill spacing and line width (px) for each fill style. */
 function fillPlan(fill: FillStyle, outlineWidth: number) {
-  if (fill === 'gray' || fill === 'solid') {
+  if ('color' in fill) {
     const width = 1200; // ≈ 12 px lines, 8 px apart: they merge into a solid area
     return {width, spacing: 8, inset: px(width) / 2 + px(outlineWidth) / 2};
   }
@@ -265,7 +286,10 @@ function fillPlan(fill: FillStyle, outlineWidth: number) {
 }
 
 /** Hatches or fills the inside of every selected closed stroke or shape. */
-export async function applyFill(fill: FillStyle): Promise<Result> {
+export async function applyFill(
+  fill: FillStyle,
+  onReady: OnReady = () => {},
+): Promise<Result> {
   const {all, targets, error} = await selection();
   if (error || !targets.length) {
     release(all);
@@ -274,6 +298,7 @@ export async function applyFill(fill: FillStyle): Promise<Result> {
       message: error ?? 'The selection has no strokes or shapes.',
     };
   }
+  onReady();
   const size = await pageSize();
   const lines: object[] = [];
   let open = 0;
@@ -288,22 +313,20 @@ export async function applyFill(fill: FillStyle): Promise<Result> {
     const style = {
       ...o.style,
       penWidth: plan.width,
-      penColor: fill === 'gray' ? 0xc9 : o.style.penColor,
+      penColor: 'color' in fill ? fill.color : HATCH_COLOR,
     };
-    if (fill === 'gray' || fill === 'solid') {
+    if ('color' in fill) {
       lines.push(
         ...fillPolylines(polygon, plan.spacing, plan.inset).map(c =>
           geometry(c, style),
         ),
       );
     } else {
-      for (const angle of fill === 'cross' ? [-45, 45] : [-45]) {
-        lines.push(
-          ...hatchSegments(polygon, angle, plan.spacing, plan.inset).map(s =>
-            geometry(s, style),
-          ),
-        );
-      }
+      lines.push(
+        ...hatchSegments(polygon, fill.hatch, plan.spacing, plan.inset).map(s =>
+          geometry(s, style),
+        ),
+      );
     }
   }
   release(all);

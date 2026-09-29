@@ -29,36 +29,55 @@ export type Summary = {
 };
 
 /** Only a lone shape can go through the undo-friendly lasso route. */
-const lassoRoute = (strokes: number, shapes: number) => strokes === 0 && shapes === 1;
+const lassoRoute = (strokes: number, shapes: number) =>
+  strokes === 0 && shapes === 1;
 
 export function ok<T>(res: any): T | null {
   return res?.success ? (res.result as T) : null;
 }
 
 export function errorText(res: any): string {
-  return res?.error ? `${res.error.message ?? 'unknown'} (code ${res.error.code ?? '?'})` : 'no result';
+  return res?.error
+    ? `${res.error.message ?? 'unknown'} (code ${res.error.code ?? '?'})`
+    : 'no result';
 }
 
 export const isStroke = (e: Element) => e.type === Element.TYPE_STROKE;
-export const isShape = (e: Element) => e.type === Element.TYPE_GEO && !!e.geometry;
-const widthOf = (e: Element) => (isShape(e) ? e.geometry!.penWidth || e.thickness : e.thickness);
-const colorOf = (e: Element) => (isShape(e) ? e.geometry!.penColor : e.stroke?.penColor);
+export const isShape = (e: Element) =>
+  e.type === Element.TYPE_GEO && !!e.geometry;
+const widthOf = (e: Element) =>
+  isShape(e) ? e.geometry!.penWidth || e.thickness : e.thickness;
+const colorOf = (e: Element) =>
+  isShape(e) ? e.geometry!.penColor : e.stroke?.penColor;
 
 function describeColors(elements: Element[]): string {
-  const values = [...new Set(elements.map(colorOf).filter((c): c is number => typeof c === 'number'))];
+  const values = [
+    ...new Set(
+      elements.map(colorOf).filter((c): c is number => typeof c === 'number'),
+    ),
+  ];
   return values.length ? values.map(colorName).join(', ') : '—';
 }
 
-export async function lassoElements(): Promise<{elements: Element[]; error?: string}> {
+export async function lassoElements(): Promise<{
+  elements: Element[];
+  error?: string;
+}> {
   const res: any = await PluginCommAPI.getLassoElements();
   const elements = ok<Element[]>(res);
-  return elements ? {elements} : {elements: [], error: `No lasso selection (${errorText(res)})`};
+  return elements
+    ? {elements}
+    : {elements: [], error: `No lasso selection (${errorText(res)})`};
 }
 
-export const release = (elements: Element[]) => elements.forEach(e => e?.uuid && PluginCommAPI.recycleElement(e.uuid));
+export const release = (elements: Element[]) =>
+  elements.forEach(e => e?.uuid && PluginCommAPI.recycleElement(e.uuid));
 
 export async function readSummary(): Promise<Summary> {
-  const [{elements, error}, pen] = await Promise.all([lassoElements(), PluginCommAPI.getPenInfo()]);
+  const [{elements, error}, pen] = await Promise.all([
+    lassoElements(),
+    PluginCommAPI.getPenInfo(),
+  ]);
   const targets = elements.filter(e => isStroke(e) || isShape(e));
   const summary: Summary = {
     strokes: elements.filter(isStroke).length,
@@ -107,11 +126,20 @@ function rawRange(values: number[]): string {
 
 function rawRanges(elements: Element[]): string {
   const strokes = rawRange(elements.filter(isStroke).map(e => e.thickness));
-  const shapes = rawRange(elements.filter(isShape).map(e => e.geometry!.penWidth));
-  const shapeThickness = rawRange(elements.filter(isShape).map(e => e.thickness));
+  const shapes = rawRange(
+    elements.filter(isShape).map(e => e.geometry!.penWidth),
+  );
+  const shapeThickness = rawRange(
+    elements.filter(isShape).map(e => e.thickness),
+  );
   return [
     strokes && `strokes ${strokes}`,
-    shapes && `shapes ${shapes}${shapeThickness && shapeThickness !== shapes ? ` (element ${shapeThickness})` : ''}`,
+    shapes &&
+      `shapes ${shapes}${
+        shapeThickness && shapeThickness !== shapes
+          ? ` (element ${shapeThickness})`
+          : ''
+      }`,
   ]
     .filter(Boolean)
     .join(' · ');
@@ -125,7 +153,10 @@ export async function ensureWriteAccess(): Promise<boolean> {
   }
   const permission = 'plugin.permission.FILE:WRITE';
   if ((await PluginManager.hasPermission(permission)) < 1) {
-    const choice = await PluginManager.requestPermission(permission, 'Changing width or colour edits the page.');
+    const choice = await PluginManager.requestPermission(
+      permission,
+      'Changing width or colour edits the page.',
+    );
     if (choice !== 1 && choice !== 2) {
       return false;
     }
@@ -135,13 +166,21 @@ export async function ensureWriteAccess(): Promise<boolean> {
 }
 
 /** Lasso route for a single selected shape: keeps the undo history. */
-async function applyToLassoShape(change: StyleChange): Promise<{ok: boolean; message: string}> {
+async function applyToLassoShape(
+  change: StyleChange,
+): Promise<{ok: boolean; message: string}> {
   const res: any = await PluginCommAPI.getLassoGeometries();
   const shapes = ok<any[]>(res) ?? [];
   if (shapes.length !== 1) {
-    return {ok: false, message: `Could not read the selected shape: ${errorText(res)}`};
+    return {
+      ok: false,
+      message: `Could not read the selected shape: ${errorText(res)}`,
+    };
   }
-  const shape = {...restyleGeometry(shapes[0], change), showLassoAfterInsert: true};
+  const shape = {
+    ...restyleGeometry(shapes[0], change),
+    showLassoAfterInsert: true,
+  };
   const mod: any = await PluginCommAPI.modifyLassoGeometry(shape);
   return ok<boolean>(mod)
     ? {ok: true, message: 'Shape updated.'}
@@ -149,13 +188,21 @@ async function applyToLassoShape(change: StyleChange): Promise<{ok: boolean; mes
 }
 
 /** Sets the width (internal units) or the colour of every selected stroke and shape. */
-export async function applyStyle(change: StyleChange): Promise<{ok: boolean; message: string}> {
+export async function applyStyle(
+  change: StyleChange,
+  onReady: () => void = () => {},
+): Promise<{ok: boolean; message: string}> {
   const summary = await readSummary();
+  onReady();
   if (!summary.error && lassoRoute(summary.strokes, summary.shapes)) {
     return applyToLassoShape(change);
   }
   if (!(await ensureWriteAccess())) {
-    return {ok: false, message: 'File access denied: allow it ("Always allow") to change the selection.'};
+    return {
+      ok: false,
+      message:
+        'File access denied: allow it ("Always allow") to change the selection.',
+    };
   }
   const {elements, error} = await lassoElements();
   if (error) {
@@ -169,14 +216,21 @@ export async function applyStyle(change: StyleChange): Promise<{ok: boolean; mes
   for (const e of targets) {
     restyle(e, change);
   }
-  const page = ok<number>(await PluginCommAPI.getCurrentPageNum()) ?? targets[0].pageNum;
+  const page =
+    ok<number>(await PluginCommAPI.getCurrentPageNum()) ?? targets[0].pageNum;
   // No explicit layer: the host uses the current layer.
   const res: any = await PluginCommAPI.modifyPageElements(targets, page);
   const changed = ok<number[]>(res);
   if (!changed) {
     release(targets);
-    return {ok: false, message: `Could not change the selection: ${errorText(res)}`};
+    return {
+      ok: false,
+      message: `Could not change the selection: ${errorText(res)}`,
+    };
   }
   // Modified elements stay referenced by the host: they are not recycled here.
-  return {ok: true, message: `${changed.length} of ${targets.length} elements updated.`};
+  return {
+    ok: true,
+    message: `${changed.length} of ${targets.length} elements updated.`,
+  };
 }

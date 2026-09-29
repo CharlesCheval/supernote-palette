@@ -7,7 +7,10 @@
 export type P = {x: number; y: number};
 
 const dist = (a: P, b: P) => Math.hypot(a.x - b.x, a.y - b.y);
-const lerp = (a: P, b: P, t: number): P => ({x: a.x + t * (b.x - a.x), y: a.y + t * (b.y - a.y)});
+const lerp = (a: P, b: P, t: number): P => ({
+  x: a.x + t * (b.x - a.x),
+  y: a.y + t * (b.y - a.y),
+});
 
 export type DashStyle = 'dashed' | 'dotted' | 'dashdot' | 'long';
 
@@ -28,7 +31,12 @@ export function dashPattern(style: DashStyle, w: number): number[] {
       return [1, Math.max(10, 3 * u)];
     case 'dashdot':
       // Centre line (trait d'axe): long, gap, dot, gap.
-      return [Math.max(36, 9 * u), Math.max(10, 2.5 * u), 1, Math.max(10, 2.5 * u)];
+      return [
+        Math.max(36, 9 * u),
+        Math.max(10, 2.5 * u),
+        1,
+        Math.max(10, 2.5 * u),
+      ];
   }
 }
 
@@ -74,7 +82,13 @@ export function dashPolyline(points: P[], pattern: number[]): P[][] {
  * the polygon (even-odd rule, so holes and concave shapes work), kept `inset` px
  * away from the outline along each line and at both extremes.
  */
-export function hatchSegments(polygon: P[], angleDeg: number, spacing: number, inset = 0): [P, P][] {
+export function hatchSegments(
+  polygon: P[],
+  angleDeg: number,
+  spacing: number,
+  inset = 0,
+  edgeToEdge = false,
+): [P, P][] {
   const a = (angleDeg * Math.PI) / 180;
   const u = {x: Math.cos(a), y: Math.sin(a)}; // along the lines
   const n = {x: -u.y, y: u.x}; // across them
@@ -82,8 +96,16 @@ export function hatchSegments(polygon: P[], angleDeg: number, spacing: number, i
   const lo = Math.min(...across);
   const hi = Math.max(...across);
   const out: [P, P][] = [];
-  const first = lo + Math.max(inset, spacing / 2);
-  for (let c = first; c <= hi - inset + 1e-9; c += spacing) {
+  // Hatching: lines centred in the shape. Fill (edge to edge): the first and last
+  // lines sit exactly at the inset, the others evenly between, at most `spacing` apart.
+  const firstRow = lo + (edgeToEdge ? inset : Math.max(inset, spacing / 2));
+  const lastRow = hi - inset;
+  const range = lastRow - firstRow;
+  const step =
+    edgeToEdge && range > 0
+      ? range / Math.max(1, Math.ceil(range / spacing))
+      : spacing;
+  for (let c = firstRow; c <= lastRow + 1e-9; c += step) {
     const hits: number[] = [];
     for (let i = 0; i < polygon.length; i++) {
       const p = polygon[i];
@@ -103,7 +125,10 @@ export function hatchSegments(polygon: P[], angleDeg: number, spacing: number, i
       if (to - from < 1) {
         continue;
       }
-      const at = (s: number): P => ({x: s * u.x + c * n.x, y: s * u.y + c * n.y});
+      const at = (s: number): P => ({
+        x: s * u.x + c * n.x,
+        y: s * u.y + c * n.y,
+      });
       out.push([at(from), at(to)]);
     }
   }
@@ -118,14 +143,16 @@ export function hatchSegments(polygon: P[], angleDeg: number, spacing: number, i
  */
 export function fillPolylines(polygon: P[], spacing: number, inset = 0): P[][] {
   const rows = new Map<number, [P, P][]>();
-  for (const s of hatchSegments(polygon, 0, spacing, inset)) {
+  for (const s of hatchSegments(polygon, 0, spacing, inset, true)) {
     const key = Math.round(s[0].y * 1000);
     rows.set(key, [...(rows.get(key) ?? []), s]);
   }
   const chains: P[][] = [];
   let chain: P[] | null = null;
   let flip = false;
-  for (const segs of [...rows.keys()].sort((x, y) => x - y).map(k => rows.get(k)!)) {
+  for (const segs of [...rows.keys()]
+    .sort((x, y) => x - y)
+    .map(k => rows.get(k)!)) {
     if (segs.length !== 1) {
       if (chain) {
         chains.push(chain);
@@ -155,7 +182,10 @@ export function closedOutline(points: P[]): P[] | null {
   }
   const xs = points.map(p => p.x);
   const ys = points.map(p => p.y);
-  const size = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys));
+  const size = Math.max(
+    Math.max(...xs) - Math.min(...xs),
+    Math.max(...ys) - Math.min(...ys),
+  );
   if (size <= 0 || dist(points[0], points[points.length - 1]) > 0.2 * size) {
     return null;
   }
@@ -163,13 +193,22 @@ export function closedOutline(points: P[]): P[] | null {
 }
 
 /** Points along an ellipse (geometry in pixels, angle in degrees). */
-export function ellipsePoints(c: P, rx: number, ry: number, angleDeg: number, n = 96): P[] {
+export function ellipsePoints(
+  c: P,
+  rx: number,
+  ry: number,
+  angleDeg: number,
+  n = 96,
+): P[] {
   const a = (angleDeg * Math.PI) / 180;
   return Array.from({length: n + 1}, (_, i) => {
     const t = (2 * Math.PI * i) / n;
     const x = rx * Math.cos(t);
     const y = ry * Math.sin(t);
-    return {x: c.x + x * Math.cos(a) - y * Math.sin(a), y: c.y + x * Math.sin(a) + y * Math.cos(a)};
+    return {
+      x: c.x + x * Math.cos(a) - y * Math.sin(a),
+      y: c.y + x * Math.sin(a) + y * Math.cos(a),
+    };
   });
 }
 
@@ -179,7 +218,11 @@ export function ellipsePoints(c: P, rx: number, ry: number, angleDeg: number, n 
  * pattern. On pieces shorter than the point spacing (dots) are widened to
  * `minOn` so that they cover at least two points.
  */
-export function dashFlags(points: P[], pattern: number[], minOn: number): boolean[] {
+export function dashFlags(
+  points: P[],
+  pattern: number[],
+  minOn: number,
+): boolean[] {
   const piece = pattern.map((l, i) => (i % 2 === 0 ? Math.max(l, minOn) : l));
   const period = piece.reduce((a, b) => a + b, 0);
   let s = 0;

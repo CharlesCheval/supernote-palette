@@ -7,7 +7,11 @@
  * 0.3 and 0.4 are interpolated from the neighbouring steps; 2.5 to 3.5 go beyond
  * the pen menu and are extrapolated (+600 per 0.5 mm, as from 1.5 to 2.0).
  */
-export const PEN_SIZES: ReadonlyArray<{mm: number; internal: number; extrapolated?: boolean}> = [
+export const PEN_SIZES: ReadonlyArray<{
+  mm: number;
+  internal: number;
+  extrapolated?: boolean;
+}> = [
   {mm: 0.1, internal: 200},
   {mm: 0.2, internal: 300},
   {mm: 0.3, internal: 400},
@@ -38,11 +42,15 @@ export function toInternal(mm: number): number {
   // Between table entries: interpolate linearly.
   const hi = PEN_SIZES.findIndex(s => s.mm > mm);
   if (hi <= 0) {
-    return hi === 0 ? Math.max(MIN_INTERNAL, PEN_SIZES[0].internal) : PEN_SIZES[PEN_SIZES.length - 1].internal;
+    return hi === 0
+      ? Math.max(MIN_INTERNAL, PEN_SIZES[0].internal)
+      : PEN_SIZES[PEN_SIZES.length - 1].internal;
   }
   const a = PEN_SIZES[hi - 1];
   const b = PEN_SIZES[hi];
-  return Math.round(a.internal + ((mm - a.mm) / (b.mm - a.mm)) * (b.internal - a.internal));
+  return Math.round(
+    a.internal + ((mm - a.mm) / (b.mm - a.mm)) * (b.internal - a.internal),
+  );
 }
 
 /** Pen size label for an internal width: "0.3", or "≈0.3" when it is not an exact pen size. */

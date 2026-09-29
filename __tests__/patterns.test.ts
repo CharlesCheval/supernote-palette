@@ -117,3 +117,20 @@ test('dots are widened to cover at least two points', () => {
   const runs = flags.join('').split('false').filter(r => r.length);
   expect(runs.every(r => r.split('true').length - 1 >= 2)).toBe(true);
 });
+
+test('fill rows reach both edges, evenly spaced', () => {
+  const rect = [
+    {x: 0, y: 0},
+    {x: 300, y: 0},
+    {x: 300, y: 178},
+    {x: 0, y: 178},
+    {x: 0, y: 0},
+  ];
+  const ys = fillPolylines(rect, 8, 7)[0].map(p => p.y);
+  expect(Math.min(...ys)).toBeCloseTo(7, 6);
+  expect(Math.max(...ys)).toBeCloseTo(171, 6);
+  const rows = [...new Set(ys.map(y => y.toFixed(6)))].map(Number).sort((a, b) => a - b);
+  const gaps = rows.slice(1).map((y, i) => y - rows[i]);
+  expect(Math.max(...gaps)).toBeLessThanOrEqual(8 + 1e-9);
+  expect(Math.max(...gaps) - Math.min(...gaps)).toBeLessThan(1e-4);
+});

@@ -18,7 +18,9 @@ Two rows under the colours act on the selection at once:
 - **Line**: dashed, long dashes, dotted, and centre line (long dash, dot). Dash lengths grow with the line width, and dashes follow curves.
   - A **stroke stays one element**: its gaps are hidden through its per-point draw flags (`stroke.flagDraw`, the mechanism a partial eraser appears to use), then it is saved with `modifyPageElements`, which clears the undo history. The panel summary shows `hidden points: off/total` for the selected strokes, to check this on the device.
   - A **shape** has no such flags: it is replaced by one geometry per dash (deleted by element number).
-- **Fill**: diagonal hatching, cross-hatching, light gray fill, solid fill (in the shape's colour). Lines are **added** inside every closed stroke or shape (ends less than 20% of its size apart), which stays; concave shapes and holes are handled (even-odd rule). Hatching uses the shape's pen, at most 0.4 wide; fills use 12 px lines 8 px apart, kept off the outline. Adding geometries keeps the undo history.
+- **Fill**: hatching "/" or "\\" (dark gray), or a solid fill in white, light gray, dark gray or black. Lines are **added** inside every closed stroke or shape (ends less than 20% of its size apart), which stays; concave shapes and holes are handled (even-odd rule). Hatching uses the shape's pen, at most 0.4 wide; fills use 12 px lines at most 8 px apart, from edge to edge, kept off the outline. Adding geometries keeps the undo history.
+- Read back from the page, a circle's or ellipse's radius fields hold **twice** the drawn radius (measured on a Manta), unlike what `insertGeometry` takes: outlines halve them.
+- The panel closes as soon as the selection is read, so the page shows while it is edited; it reopens only to report a failure.
 
 Supernote has no dashed or filled style, so both are made of plain geometries (`GEO_polygon` polylines): a solid fill is a zigzag of lines closer than their width. Geometry is in `src/patterns.ts` (unit-tested), SDK calls in `src/effects.ts`.
 
