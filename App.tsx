@@ -20,7 +20,7 @@ import {
   FILLS,
   FillStyle,
   HATCHES,
-  HATCH_SPACINGS,
+  HATCH_DENSITY,
   applyDashes,
   applyFill,
 } from './src/effects';
@@ -117,36 +117,19 @@ function FillIcon({fill}: {fill: FillStyle}) {
   );
 }
 
-/** Hatch spacing preview: parallel bars, their gap growing with the factor. */
-function SpacingIcon({factor}: {factor: number}) {
-  const gap = 5 * factor;
-  const offsets = [-3, -2, -1, 0, 1, 2, 3]
-    .map(i => i * gap)
-    .filter(o => Math.abs(o) < 30);
-  return (
-    <View style={styles.fillBox}>
-      {offsets.map(o => (
-        <View
-          key={o}
-          style={[
-            styles.hatch,
-            styles.hatchBlack,
-            {transform: [{translateX: o}, {rotate: '45deg'}]},
-          ]}
-        />
-      ))}
-    </View>
-  );
-}
-
-/** Hatch spacing chosen in the panel; kept while the plugin runs. */
-let chosenSpacing = 2;
+/** Hatch density chosen in the panel (percent); kept while the plugin runs. */
+let chosenDensity = HATCH_DENSITY.initial;
 
 function App(): React.JSX.Element {
   const [summary, setSummary] = useState<Summary | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
-  const [spacing, setSpacing] = useState(chosenSpacing);
+  const [density, setDensity] = useState(chosenDensity);
+  const changeDensity = (delta: number) => {
+    const {min, max} = HATCH_DENSITY;
+    chosenDensity = Math.min(max, Math.max(min, density + delta));
+    setDensity(chosenDensity);
+  };
 
   const refresh = useCallback(() => {
     setMessage('');
@@ -273,29 +256,25 @@ function App(): React.JSX.Element {
           <Pressable
             key={JSON.stringify(f)}
             style={[styles.tool, busy && styles.dim]}
-            onPress={() => run(ready => applyFill(f, ready, spacing))}>
+            onPress={() => run(ready => applyFill(f, ready, density))}>
             <FillIcon fill={f} />
           </Pressable>
         ))}
       </View>
 
       <View style={styles.section}>
-        <Text style={styles.sectionLabel}>Gap</Text>
-        {HATCH_SPACINGS.map(k => (
-          <Pressable
-            key={k}
-            style={[
-              styles.tool,
-              styles.small,
-              k === spacing && styles.selected,
-            ]}
-            onPress={() => {
-              chosenSpacing = k;
-              setSpacing(k);
-            }}>
-            <SpacingIcon factor={k} />
-          </Pressable>
-        ))}
+        <Text style={styles.sectionLabel}>Density</Text>
+        <Pressable
+          style={[styles.tool, styles.small]}
+          onPress={() => changeDensity(-HATCH_DENSITY.step)}>
+          <Text style={styles.stepText}>−</Text>
+        </Pressable>
+        <Text style={styles.density}>{density} %</Text>
+        <Pressable
+          style={[styles.tool, styles.small]}
+          onPress={() => changeDensity(HATCH_DENSITY.step)}>
+          <Text style={styles.stepText}>+</Text>
+        </Pressable>
       </View>
 
       <View style={styles.section}>
@@ -410,9 +389,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   iconRow: {flexDirection: 'row', alignItems: 'center'},
-  hatchBlack: {backgroundColor: '#000000'},
-  small: {height: 60, borderColor: '#c9c9c9'},
-  selected: {borderWidth: 4, borderColor: '#000000'},
+  small: {height: 60},
+  stepText: {fontSize: 30, color: '#000000'},
+  density: {flex: 2, fontSize: 26, color: '#000000', textAlign: 'center'},
   bar: {height: 5, backgroundColor: '#000000'},
   dot: {width: 6, height: 6, borderRadius: 3, backgroundColor: '#000000'},
   fillBox: {
