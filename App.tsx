@@ -82,6 +82,7 @@ function App(): React.JSX.Element {
           others: 0,
           range: '—',
           colors: '—',
+          hidden: '',
           raw: '',
           penWidth: null,
           error: String(e?.message ?? e),
@@ -174,7 +175,12 @@ function App(): React.JSX.Element {
 
       {/* At the bottom: the selection is read asynchronously, so nothing above moves when it arrives. */}
       <Text style={styles.info}>{describe(summary)}</Text>
-      {summary?.raw ? <Text style={styles.raw}>raw width: {summary.raw}</Text> : null}
+      {summary?.raw ? (
+        <Text style={styles.raw}>
+          raw width: {summary.raw}
+          {summary.hidden ? ` · hidden points: ${summary.hidden}` : ''}
+        </Text>
+      ) : null}
 
       {message ? <Text style={styles.message}>{message}</Text> : null}
     </ScrollView>

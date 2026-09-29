@@ -1,11 +1,13 @@
 import {
   P,
   closedOutline,
+  dashFlags,
   dashPattern,
   dashPolyline,
   ellipsePoints,
   fillPolylines,
   hatchSegments,
+  meanSpacing,
 } from '../src/patterns';
 
 const len = (pts: P[]) => pts.slice(1).reduce((s, p, i) => s + Math.hypot(p.x - pts[i].x, p.y - pts[i].y), 0);
@@ -99,4 +101,19 @@ test('inset keeps the fill off the outline', () => {
     expect(Math.min(a.x, b.x)).toBeCloseTo(6, 6);
     expect(Math.max(a.x, b.x)).toBeCloseTo(94, 6);
   }
+});
+
+test('dash flags follow the pattern along the stroke', () => {
+  const line = Array.from({length: 101}, (_, i) => ({x: i, y: 0})); // 1 px apart
+  const flags = dashFlags(line, [10, 5], 2);
+  expect(flags.slice(0, 10).every(Boolean)).toBe(true);
+  expect(flags.slice(10, 15).some(Boolean)).toBe(false);
+  expect(flags.slice(15, 25).every(Boolean)).toBe(true);
+});
+
+test('dots are widened to cover at least two points', () => {
+  const sparse = Array.from({length: 50}, (_, i) => ({x: 4 * i, y: 0})); // 4 px apart
+  const flags = dashFlags(sparse, [1, 12], 2 * meanSpacing(sparse));
+  const runs = flags.join('').split('false').filter(r => r.length);
+  expect(runs.every(r => r.split('true').length - 1 >= 2)).toBe(true);
 });

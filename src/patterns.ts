@@ -172,3 +172,37 @@ export function ellipsePoints(c: P, rx: number, ry: number, angleDeg: number, n 
     return {x: c.x + x * Math.cos(a) - y * Math.sin(a), y: c.y + x * Math.sin(a) + y * Math.cos(a)};
   });
 }
+
+/**
+ * Dashes as per-point draw flags, for a stroke that stays ONE element: point i
+ * is drawn when its distance along the stroke falls in an "on" piece of the
+ * pattern. On pieces shorter than the point spacing (dots) are widened to
+ * `minOn` so that they cover at least two points.
+ */
+export function dashFlags(points: P[], pattern: number[], minOn: number): boolean[] {
+  const piece = pattern.map((l, i) => (i % 2 === 0 ? Math.max(l, minOn) : l));
+  const period = piece.reduce((a, b) => a + b, 0);
+  let s = 0;
+  return points.map((p, i) => {
+    if (i > 0) {
+      s += dist(points[i - 1], p);
+    }
+    let r = s % period;
+    for (let k = 0; k < piece.length; k++) {
+      if (r < piece[k]) {
+        return k % 2 === 0;
+      }
+      r -= piece[k];
+    }
+    return true;
+  });
+}
+
+/** Mean distance between consecutive points. */
+export function meanSpacing(points: P[]): number {
+  let total = 0;
+  for (let i = 1; i < points.length; i++) {
+    total += dist(points[i - 1], points[i]);
+  }
+  return points.length > 1 ? total / (points.length - 1) : 0;
+}

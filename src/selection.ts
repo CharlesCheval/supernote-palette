@@ -21,6 +21,8 @@ export type Summary = {
   colors: string;
   /** Raw internal widths of strokes and of shapes, to compare their scales. */
   raw: string;
+  /** Hidden points (draw flag off) over all points of the first strokes, e.g. "12/340". */
+  hidden: string;
   /** Active pen raw width, to check the mm mapping. */
   penWidth: number | null;
   error?: string;
@@ -65,11 +67,32 @@ export async function readSummary(): Promise<Summary> {
     range: describeRange(targets.map(widthOf)),
     colors: describeColors(targets),
     raw: rawRanges(elements),
+    hidden: await hiddenPoints(elements.filter(isStroke).slice(0, 5)),
     penWidth: ok<{width: number}>(pen)?.width ?? null,
     error,
   };
   release(elements);
   return summary;
+}
+
+/** Diagnostics for dashed strokes: how many points have their draw flag off. */
+async function hiddenPoints(strokes: Element[]): Promise<string> {
+  let off = 0;
+  let total = 0;
+  try {
+    for (const e of strokes) {
+      const flags = e.stroke?.flagDraw;
+      const n = flags ? await flags.size() : 0;
+      if (n > 0) {
+        const values = await flags!.getRange(0, n);
+        off += values.filter(v => v === false).length;
+        total += n;
+      }
+    }
+  } catch {
+    return 'n/a';
+  }
+  return total ? `${off}/${total}` : '';
 }
 
 function rawRange(values: number[]): string {
