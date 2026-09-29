@@ -16,7 +16,7 @@ import {
 } from 'react-native';
 import {PluginManager} from 'sn-plugin-lib';
 import {Summary, applyStyle, readSummary} from './src/selection';
-import {FILLS, FillStyle, applyDashes, applyFill} from './src/effects';
+import {FILLS, FillStyle, HATCHES, applyDashes, applyFill} from './src/effects';
 import {DASH_STYLES, DashStyle} from './src/patterns';
 import {PEN_COLORS, StyleChange} from './src/style';
 import {PRESETS_MM, formatMm, toInternal} from './src/widths';
@@ -85,9 +85,9 @@ function DashIcon({dash}: {dash: DashStyle}) {
 
 const hex = (c: number) => `#${c.toString(16).padStart(2, '0').repeat(3)}`;
 
-/** Square with dark gray hatching (rotated bars, clipped), or filled with a colour. */
+/** Square with hatching in its colour (rotated bars, clipped), or filled with a colour. */
 function FillIcon({fill}: {fill: FillStyle}) {
-  if ('color' in fill) {
+  if (!('hatch' in fill)) {
     return (
       <View style={[styles.fillBox, {backgroundColor: hex(fill.color)}]} />
     );
@@ -101,6 +101,7 @@ function FillIcon({fill}: {fill: FillStyle}) {
           key={o}
           style={[
             styles.hatch,
+            {backgroundColor: hex(fill.color)},
             {transform: [{translateX: o}, {rotate: `${turn}deg`}]},
           ]}
         />
@@ -229,6 +230,18 @@ function App(): React.JSX.Element {
             style={[styles.tool, busy && styles.dim]}
             onPress={() => run(ready => applyDashes(d, ready))}>
             <DashIcon dash={d} />
+          </Pressable>
+        ))}
+      </View>
+
+      <View style={styles.section}>
+        <Text style={styles.sectionLabel}>Hatch</Text>
+        {HATCHES.map(f => (
+          <Pressable
+            key={JSON.stringify(f)}
+            style={[styles.tool, busy && styles.dim]}
+            onPress={() => run(ready => applyFill(f, ready))}>
+            <FillIcon fill={f} />
           </Pressable>
         ))}
       </View>

@@ -30,19 +30,24 @@ import {
  * - hatching and fills are ADDED inside each closed stroke / shape, which stays.
  */
 
-/** Hatching at ±45° (drawn in dark gray), or a solid fill in one of the system colours. */
-export type FillStyle = {hatch: -45 | 45} | {color: number};
+/** Hatching at ±45° in a colour, or a solid fill in a colour. */
+export type FillStyle = {hatch: -45 | 45; color: number} | {color: number};
 
+/** "/" and "\", in black then dark gray: one row of four. */
+export const HATCHES: FillStyle[] = [
+  {hatch: -45, color: 0x00},
+  {hatch: 45, color: 0x00},
+  {hatch: -45, color: 0x9d},
+  {hatch: 45, color: 0x9d},
+];
+
+/** Solid fills in the four system colours, light to dark. */
 export const FILLS: FillStyle[] = [
-  {hatch: -45},
-  {hatch: 45},
   {color: 0xfe},
   {color: 0xc9},
   {color: 0x9d},
   {color: 0x00},
 ];
-
-const HATCH_COLOR = 0x9d;
 
 /** Called once the selection is read: the panel can close while the page is edited. */
 type OnReady = () => void;
@@ -123,7 +128,8 @@ function geometry(points: P[], style: Style) {
   };
 }
 
-async function insertAll(geometries: object[]): Promise<number> {
+/** One insertGeometry call per line: slow (each call redraws), but proven. */
+async function insertOneByOne(geometries: object[]): Promise<number> {
   let done = 0;
   for (const g of geometries) {
     if (!ok<boolean>(await PluginCommAPI.insertGeometry(g as any))) {
@@ -132,6 +138,42 @@ async function insertAll(geometries: object[]): Promise<number> {
     done++;
   }
   return done;
+}
+
+/**
+ * All lines in ONE insertPageElements call: the geometry elements are created
+ * in parallel (createElement does not touch the page), then inserted together.
+ * Falls back to one insertGeometry per line if the batch is refused.
+ */
+async function insertAll(geometries: object[]): Promise<number> {
+  const page = ok<number>(await PluginCommAPI.getCurrentPageNum());
+  if (page != null && geometries.length > 1) {
+    try {
+      const created = await Promise.all(
+        geometries.map(() => PluginCommAPI.createElement(Element.TYPE_GEO)),
+      );
+      const elements = created.map(r => ok<Element>(r));
+      if (elements.every(e => e)) {
+        elements.forEach((e, i) => {
+          const g = geometries[i] as any;
+          e!.geometry = g;
+          e!.thickness = g.penWidth;
+          e!.pageNum = page;
+        });
+        // Success is judged on the call itself: its result type is not documented.
+        const res: any = await PluginCommAPI.insertPageElements(
+          elements as Element[],
+          page,
+        );
+        if (res?.success && res.result !== false) {
+          return geometries.length;
+        }
+      }
+    } catch {
+      // fall back below
+    }
+  }
+  return insertOneByOne(geometries);
 }
 
 async function selection(): Promise<{
@@ -273,14 +315,14 @@ export async function applyDashes(
 
 /** Hatching / fill spacing and line width (px) for each fill style. */
 function fillPlan(fill: FillStyle, outlineWidth: number) {
-  if ('color' in fill) {
+  if (!('hatch' in fill)) {
     const width = 1200; // ≈ 12 px lines, 8 px apart: they merge into a solid area
     return {width, spacing: 8, inset: px(width) / 2 + px(outlineWidth) / 2};
   }
   const width = Math.min(outlineWidth, 500);
   return {
     width,
-    spacing: Math.max(14, 3 * px(width)),
+    spacing: Math.max(28, 6 * px(width)),
     inset: px(outlineWidth) / 2,
   };
 }
@@ -313,9 +355,9 @@ export async function applyFill(
     const style = {
       ...o.style,
       penWidth: plan.width,
-      penColor: 'color' in fill ? fill.color : HATCH_COLOR,
+      penColor: fill.color,
     };
-    if ('color' in fill) {
+    if (!('hatch' in fill)) {
       lines.push(
         ...fillPolylines(polygon, plan.spacing, plan.inset).map(c =>
           geometry(c, style),
