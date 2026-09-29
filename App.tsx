@@ -16,7 +16,14 @@ import {
 } from 'react-native';
 import {PluginManager} from 'sn-plugin-lib';
 import {Summary, applyStyle, readSummary} from './src/selection';
-import {FILLS, FillStyle, HATCHES, applyDashes, applyFill} from './src/effects';
+import {
+  FILLS,
+  FillStyle,
+  HATCHES,
+  HATCH_SPACINGS,
+  applyDashes,
+  applyFill,
+} from './src/effects';
 import {DASH_STYLES, DashStyle} from './src/patterns';
 import {PEN_COLORS, StyleChange} from './src/style';
 import {PRESETS_MM, formatMm, toInternal} from './src/widths';
@@ -110,10 +117,36 @@ function FillIcon({fill}: {fill: FillStyle}) {
   );
 }
 
+/** Hatch spacing preview: parallel bars, their gap growing with the factor. */
+function SpacingIcon({factor}: {factor: number}) {
+  const gap = 5 * factor;
+  const offsets = [-3, -2, -1, 0, 1, 2, 3]
+    .map(i => i * gap)
+    .filter(o => Math.abs(o) < 30);
+  return (
+    <View style={styles.fillBox}>
+      {offsets.map(o => (
+        <View
+          key={o}
+          style={[
+            styles.hatch,
+            styles.hatchBlack,
+            {transform: [{translateX: o}, {rotate: '45deg'}]},
+          ]}
+        />
+      ))}
+    </View>
+  );
+}
+
+/** Hatch spacing chosen in the panel; kept while the plugin runs. */
+let chosenSpacing = 2;
+
 function App(): React.JSX.Element {
   const [summary, setSummary] = useState<Summary | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
+  const [spacing, setSpacing] = useState(chosenSpacing);
 
   const refresh = useCallback(() => {
     setMessage('');
@@ -240,8 +273,27 @@ function App(): React.JSX.Element {
           <Pressable
             key={JSON.stringify(f)}
             style={[styles.tool, busy && styles.dim]}
-            onPress={() => run(ready => applyFill(f, ready))}>
+            onPress={() => run(ready => applyFill(f, ready, spacing))}>
             <FillIcon fill={f} />
+          </Pressable>
+        ))}
+      </View>
+
+      <View style={styles.section}>
+        <Text style={styles.sectionLabel}>Gap</Text>
+        {HATCH_SPACINGS.map(k => (
+          <Pressable
+            key={k}
+            style={[
+              styles.tool,
+              styles.small,
+              k === spacing && styles.selected,
+            ]}
+            onPress={() => {
+              chosenSpacing = k;
+              setSpacing(k);
+            }}>
+            <SpacingIcon factor={k} />
           </Pressable>
         ))}
       </View>
@@ -358,6 +410,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   iconRow: {flexDirection: 'row', alignItems: 'center'},
+  hatchBlack: {backgroundColor: '#000000'},
+  small: {height: 60, borderColor: '#c9c9c9'},
+  selected: {borderWidth: 4, borderColor: '#000000'},
   bar: {height: 5, backgroundColor: '#000000'},
   dot: {width: 6, height: 6, borderRadius: 3, backgroundColor: '#000000'},
   fillBox: {

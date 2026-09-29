@@ -19,6 +19,6 @@ test('panel renders sizes, colours, line and fill tools', async () => {
     tree = renderer.create(<App />);
   });
   const buttons = tree!.root.findAllByType(Pressable);
-  // close + 15 sizes + 4 colours + 4 lines + 4 hatches + 4 fills + match pen
-  expect(buttons.length).toBe(1 + 15 + 4 + 4 + 4 + 4 + 1);
+  // close + 15 sizes + 4 colours + 4 lines + 4 hatches + 4 gaps + 4 fills + match pen
+  expect(buttons.length).toBe(1 + 15 + 4 + 4 + 4 + 4 + 4 + 1);
 });

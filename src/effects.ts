@@ -41,6 +41,12 @@ export const HATCHES: FillStyle[] = [
   {hatch: 45, color: 0x9d},
 ];
 
+/**
+ * Hatch spacing choices, as multiples of the base gap (14 px, or 3 line widths
+ * for thick pens): dense to sparse. 2 is the default.
+ */
+export const HATCH_SPACINGS = [1, 1.5, 2, 3];
+
 /** Solid fills in the four system colours, light to dark. */
 export const FILLS: FillStyle[] = [
   {color: 0xfe},
@@ -314,7 +320,11 @@ export async function applyDashes(
 }
 
 /** Hatching / fill spacing and line width (px) for each fill style. */
-function fillPlan(fill: FillStyle, outlineWidth: number) {
+function fillPlan(
+  fill: FillStyle,
+  outlineWidth: number,
+  spacingFactor: number,
+) {
   if (!('hatch' in fill)) {
     const width = 1200; // ≈ 12 px lines, 8 px apart: they merge into a solid area
     return {width, spacing: 8, inset: px(width) / 2 + px(outlineWidth) / 2};
@@ -322,7 +332,7 @@ function fillPlan(fill: FillStyle, outlineWidth: number) {
   const width = Math.min(outlineWidth, 500);
   return {
     width,
-    spacing: Math.max(28, 6 * px(width)),
+    spacing: spacingFactor * Math.max(14, 3 * px(width)),
     inset: px(outlineWidth) / 2,
   };
 }
@@ -331,6 +341,7 @@ function fillPlan(fill: FillStyle, outlineWidth: number) {
 export async function applyFill(
   fill: FillStyle,
   onReady: OnReady = () => {},
+  spacingFactor = 2,
 ): Promise<Result> {
   const {all, targets, error} = await selection();
   if (error || !targets.length) {
@@ -351,7 +362,7 @@ export async function applyFill(
       open++;
       continue;
     }
-    const plan = fillPlan(fill, o.style.penWidth);
+    const plan = fillPlan(fill, o.style.penWidth, spacingFactor);
     const style = {
       ...o.style,
       penWidth: plan.width,
