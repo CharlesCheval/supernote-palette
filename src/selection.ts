@@ -29,16 +29,16 @@ export type Summary = {
 /** Only a lone shape can go through the undo-friendly lasso route. */
 const lassoRoute = (strokes: number, shapes: number) => strokes === 0 && shapes === 1;
 
-function ok<T>(res: any): T | null {
+export function ok<T>(res: any): T | null {
   return res?.success ? (res.result as T) : null;
 }
 
-function errorText(res: any): string {
+export function errorText(res: any): string {
   return res?.error ? `${res.error.message ?? 'unknown'} (code ${res.error.code ?? '?'})` : 'no result';
 }
 
-const isStroke = (e: Element) => e.type === Element.TYPE_STROKE;
-const isShape = (e: Element) => e.type === Element.TYPE_GEO && !!e.geometry;
+export const isStroke = (e: Element) => e.type === Element.TYPE_STROKE;
+export const isShape = (e: Element) => e.type === Element.TYPE_GEO && !!e.geometry;
 const widthOf = (e: Element) => (isShape(e) ? e.geometry!.penWidth || e.thickness : e.thickness);
 const colorOf = (e: Element) => (isShape(e) ? e.geometry!.penColor : e.stroke?.penColor);
 
@@ -47,13 +47,13 @@ function describeColors(elements: Element[]): string {
   return values.length ? values.map(colorName).join(', ') : '—';
 }
 
-async function lassoElements(): Promise<{elements: Element[]; error?: string}> {
+export async function lassoElements(): Promise<{elements: Element[]; error?: string}> {
   const res: any = await PluginCommAPI.getLassoElements();
   const elements = ok<Element[]>(res);
   return elements ? {elements} : {elements: [], error: `No lasso selection (${errorText(res)})`};
 }
 
-const release = (elements: Element[]) => elements.forEach(e => e?.uuid && PluginCommAPI.recycleElement(e.uuid));
+export const release = (elements: Element[]) => elements.forEach(e => e?.uuid && PluginCommAPI.recycleElement(e.uuid));
 
 export async function readSummary(): Promise<Summary> {
   const [{elements, error}, pen] = await Promise.all([lassoElements(), PluginCommAPI.getPenInfo()]);
@@ -96,7 +96,7 @@ function rawRanges(elements: Element[]): string {
 
 let writeGranted = false;
 
-async function ensureWriteAccess(): Promise<boolean> {
+export async function ensureWriteAccess(): Promise<boolean> {
   if (writeGranted) {
     return true;
   }
