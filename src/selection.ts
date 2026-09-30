@@ -70,6 +70,53 @@ export async function lassoElements(): Promise<{
     : {elements: [], error: `No lasso selection (${errorText(res)})`};
 }
 
+/**
+ * Right after a lasso move or resize, while the shape is still selected, the
+ * host keeps the transform pending in the lasso: the elements it hands out are
+ * the old ones, and changes made to the page only show once the lasso is let go
+ * and made again. So, before acting, the lasso is let go (which commits the
+ * transform, as tapping elsewhere does) and made again on the same area.
+ *
+ * Returns a filter that keeps only the elements that were selected before, in
+ * case the new rectangular lasso also caught neighbours. If the host refuses the
+ * lasso calls, nothing is changed and every element is kept.
+ */
+export async function settleLasso(): Promise<(e: Element) => boolean> {
+  const keepAll = () => true;
+  try {
+    const before = await lassoElements();
+    const nums = new Set(before.elements.map(e => e.numInPage));
+    const count = before.elements.length;
+    release(before.elements);
+    const rect = ok<{left: number; top: number; right: number; bottom: number}>(
+      await PluginCommAPI.getLassoRect(),
+    );
+    if (before.error || !rect) {
+      return keepAll;
+    }
+    if (!ok<boolean>(await PluginCommAPI.setLassoBoxState(2))) {
+      return keepAll;
+    }
+    const r = {
+      left: Math.floor(rect.left),
+      top: Math.floor(rect.top),
+      right: Math.ceil(rect.right),
+      bottom: Math.ceil(rect.bottom),
+    };
+    await PluginCommAPI.lassoElements(r);
+    const after = await lassoElements();
+    const known = after.elements.filter(e => nums.has(e.numInPage)).length;
+    release(after.elements);
+    // Same elements (numbers kept): keep only those. Numbers changed by the
+    // commit: fall back to the whole new selection if it has the same size.
+    return known === count || after.elements.length !== count
+      ? e => nums.has(e.numInPage)
+      : keepAll;
+  } catch {
+    return keepAll;
+  }
+}
+
 export const release = (elements: Element[]) =>
   elements.forEach(e => e?.uuid && PluginCommAPI.recycleElement(e.uuid));
 
@@ -98,6 +145,7 @@ export async function readSummary(): Promise<Summary> {
 async function hiddenPoints(strokes: Element[]): Promise<string> {
   let off = 0;
   let total = 0;
+  let erasers = 0;
   try {
     for (const e of strokes) {
       const flags = e.stroke?.flagDraw;
@@ -107,11 +155,17 @@ async function hiddenPoints(strokes: Element[]): Promise<string> {
         off += values.filter(v => v === false).length;
         total += n;
       }
+      erasers += e.stroke?.eraseLineTrailNums
+        ? Math.max(0, await e.stroke.eraseLineTrailNums.size())
+        : 0;
     }
   } catch {
     return 'n/a';
   }
-  return total ? `${off}/${total}` : '';
+  // Diagnostics: hidden points, and eraser strokes cutting the selected strokes.
+  return [total ? `${off}/${total}` : '', erasers ? `erased by ${erasers}` : '']
+    .filter(Boolean)
+    .join(' · ');
 }
 
 function rawRange(values: number[]): string {
@@ -192,6 +246,7 @@ export async function applyStyle(
   change: StyleChange,
   onReady: () => void = () => {},
 ): Promise<{ok: boolean; message: string}> {
+  const keep = await settleLasso();
   const summary = await readSummary();
   onReady();
   if (!summary.error && lassoRoute(summary.strokes, summary.shapes)) {
@@ -217,7 +272,9 @@ export async function applyStyle(
     if (error) {
       return {ok: false, message: error};
     }
-    const targets = elements.filter(e => isStroke(e) || isShape(e));
+    const targets = elements.filter(
+      e => (isStroke(e) || isShape(e)) && keep(e),
+    );
     release(elements.filter(e => !targets.includes(e)));
     if (!targets.length) {
       return {ok: false, message: 'The selection has no strokes or shapes.'};
@@ -240,7 +297,7 @@ export async function applyStyle(
       continue;
     }
     // Modified elements stay referenced by the host: they are not recycled here.
-    if (await applied(change)) {
+    if (await applied(change, keep)) {
       return {ok: true, message: `${targets.length} elements updated.`};
     }
     // Read back unchanged: apply again; if it still reads back unchanged after
@@ -251,12 +308,15 @@ export async function applyStyle(
 }
 
 /** Whether the selection, read again, shows the change. */
-async function applied(change: StyleChange): Promise<boolean> {
+async function applied(
+  change: StyleChange,
+  keep: (e: Element) => boolean,
+): Promise<boolean> {
   const {elements, error} = await lassoElements();
   if (error) {
     return true; // cannot check (selection dropped): trust the host's answer
   }
-  const targets = elements.filter(e => isStroke(e) || isShape(e));
+  const targets = elements.filter(e => (isStroke(e) || isShape(e)) && keep(e));
   const ok_ = targets.every(e =>
     'width' in change
       ? (isShape(e) ? e.geometry!.penWidth || e.thickness : e.thickness) ===

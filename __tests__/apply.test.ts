@@ -58,3 +58,26 @@ test('a refusal is reported after three attempts', async () => {
   expect(res.message).toMatch(/nope/);
   expect(api.modifyPageElements).toHaveBeenCalledTimes(3);
 });
+
+test('a pending lasso resize is committed first: lasso let go and made again, originals only', async () => {
+  const el = (n: number, t = stored) => ({type: 0, uuid: `u${n}`, numInPage: n, pageNum: 0, thickness: t, stroke: {penColor: 0, penType: 10}});
+  let lassoed = [3];
+  api.getLassoElements.mockImplementation(async () => ({success: true, result: lassoed.map(n => el(n))}));
+  api.getLassoRect = jest.fn(async () => ({success: true, result: {left: 10.4, top: 20.6, right: 200.2, bottom: 300.9}}));
+  api.setLassoBoxState = jest.fn(async () => ({success: true, result: true}));
+  // The rectangular lasso also catches a neighbour (#7).
+  api.lassoElements = jest.fn(async () => {
+    lassoed = [3, 7];
+    return {success: true, result: true};
+  });
+  api.modifyPageElements.mockImplementation(async (els: any[]) => {
+    stored = els[0].thickness;
+    return {success: true, result: els.map(e => e.numInPage)};
+  });
+  const res = await applyStyle({width: 300});
+  expect(res.ok).toBe(true);
+  expect(api.setLassoBoxState).toHaveBeenCalledWith(2);
+  expect(api.lassoElements).toHaveBeenCalledWith({left: 10, top: 20, right: 201, bottom: 301});
+  const modified = api.modifyPageElements.mock.calls[0][0].map((e: any) => e.numInPage);
+  expect(modified).toEqual([3]); // not the neighbour
+});

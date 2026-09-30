@@ -23,6 +23,7 @@ import {
   lassoElements,
   ok,
   release,
+  settleLasso,
 } from './selection';
 import {getSettings} from './settings';
 
@@ -186,10 +187,12 @@ async function selection(): Promise<{
   targets: Element[];
   error?: string;
 }> {
+  // Commit a pending lasso move / resize first, so the elements are current.
+  const keep = await settleLasso();
   const {elements, error} = await lassoElements();
   return {
     all: elements,
-    targets: elements.filter(e => isStroke(e) || isShape(e)),
+    targets: elements.filter(e => (isStroke(e) || isShape(e)) && keep(e)),
     error,
   };
 }
@@ -351,17 +354,25 @@ export async function applyFill(
   // Visible pieces of every selected stroke / shape: a partly erased stroke
   // stays one element with hidden points, and only its visible runs count.
   const pieces: {points: P[]; style: Style}[] = [];
+  let erased = 0;
+  let unread = 0;
   for (const e of targets) {
     const o = await outlineOf(e, size);
-    if (o) {
-      const runs = visibleRuns(o.points, await drawFlags(e, o.points.length));
-      pieces.push(...runs.map(points => ({points, style: o.style})));
+    if (!o) {
+      unread++;
+      continue;
+    }
+    const runs = visibleRuns(o.points, await drawFlags(e, o.points.length));
+    pieces.push(...runs.map(points => ({points, style: o.style})));
+    // Cut with the eraser: the stored outline still holds the erased parts.
+    if (await eraserCount(e)) {
+      erased++;
     }
   }
   release(all);
   const closed = pieces.map(o => closedOutline(o.points));
   const lines: object[] = [];
-  if (pieces.length && closed.every(Boolean)) {
+  if (pieces.length && !erased && closed.every(Boolean)) {
     // Every piece closed on its own: fill each exactly, from its outline.
     pieces.forEach((o, i) =>
       lines.push(...fillPolygon(closed[i]!, o.style, fill, density)),
@@ -369,14 +380,22 @@ export async function applyFill(
   } else if (pieces.length) {
     // Otherwise the pieces may close areas together (joined strokes, shapes cut
     // with the eraser and joined up…): all of them, closed ones included, are
-    // taken as the walls.
+    // taken as the walls. For shapes cut with the eraser, whose stored outline
+    // still holds the erased parts, this fills their union.
     lines.push(...fillAcross(pieces, fill, density));
   }
   if (!lines.length) {
+    const seen = [
+      `${targets.length} selected`,
+      `${pieces.length} pieces (${closed.filter(Boolean).length} closed)`,
+      erased ? `${erased} erased` : '',
+      unread ? `${unread} unreadable` : '',
+    ].filter(Boolean);
     return {
       ok: false,
-      message:
-        'Nothing closed to fill: close the outline (ends may be drawn with separate strokes) and try again.',
+      message: `Nothing closed to fill: close the outline and try again. (${seen.join(
+        ' · ',
+      )})`,
     };
   }
   const done = await insertAll(lines);
@@ -406,6 +425,16 @@ function fillPolygon(
   return hatchSegments(polygon, fill.hatch, plan.spacing, plan.inset).map(s =>
     geometry(s, style),
   );
+}
+
+/** How many eraser strokes cut this stroke (0 when none, or unknown). */
+async function eraserCount(e: Element): Promise<number> {
+  try {
+    const refs = e.stroke?.eraseLineTrailNums;
+    return isStroke(e) && refs ? Math.max(0, await refs.size()) : 0;
+  } catch {
+    return 0;
+  }
 }
 
 /** A stroke's per-point draw flags (false = erased), or null when it has none. */

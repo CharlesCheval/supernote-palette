@@ -274,7 +274,10 @@ export function range(values: Iterable<number>): {min: number; max: number} {
  * erased points through its draw flags (false = hidden). Runs shorter than two
  * points are dropped. Without flags, the whole stroke is one run.
  */
-export function visibleRuns(points: P[], flags?: readonly boolean[] | null): P[][] {
+export function visibleRuns(
+  points: P[],
+  flags?: readonly boolean[] | null,
+): P[][] {
   if (!flags || flags.length !== points.length) {
     return [points];
   }
