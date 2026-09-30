@@ -18,13 +18,26 @@ AppRegistry.registerComponent(appName, () => App);
 PluginManager.init();
 loadSettings();
 
-PluginManager.registerButton(2, ['NOTE', 'DOC'], {
+const BUTTON = {
   id: BUTTON_WIDTH,
   name: 'Inkwell',
   icon: Image.resolveAssetSource(require('./assets/icon_width.png')).uri,
   editDataTypes: EDIT_TYPES,
   showType: 1,
-});
+};
+
+/**
+ * Panel as a centred dialog (regionType 1) sized to its content, so the note
+ * stays visible around it. The keys come from the SDK's native side
+ * (PluginButtonKey: regionType / regionWidth / regionHeight, in pixels) and are
+ * not documented for JavaScript: if the host refuses them, the button is
+ * registered again without, as before (full-screen panel).
+ */
+const DIALOG = {regionType: 1, regionWidth: 1440, regionHeight: 1240};
+
+PluginManager.registerButton(2, ['NOTE', 'DOC'], {...BUTTON, ...DIALOG, showData: DIALOG})
+  .then(ok => ok || PluginManager.registerButton(2, ['NOTE', 'DOC'], BUTTON))
+  .catch(() => PluginManager.registerButton(2, ['NOTE', 'DOC'], BUTTON));
 
 PluginManager.registerButtonListener({
   onButtonPress(event) {

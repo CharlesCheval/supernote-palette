@@ -11,6 +11,10 @@ The panel also shows:
 - **Selection summary** (at the bottom): how many strokes and shapes are selected, and their current width and colours.
 - **Match active pen:** applies the width of the pen currently selected in Supernote.
 
+## Panel
+
+Compact: a 4-column grid of sizes (with "= pen", the active pen's size), then one row per tool, a label and four choices: **Colour**, **Line**, **Hatch** (with its density `− 50% +` under the label) and **Fill**, and a one-line selection summary. It opens as a centred dialog sized to its content (`regionType` 1, 1440×1240 px, keys from the SDK's native side, not documented for JavaScript; if the host refuses them, the button is registered as before, full screen). Errors show in a bubble over the panel and fade after 4 s; an action is stopped after 30 s so the panel can never stay stuck.
+
 ## Lines and fills
 
 Two rows under the colours act on the selection at once:
