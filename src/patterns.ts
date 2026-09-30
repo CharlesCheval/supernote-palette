@@ -142,8 +142,16 @@ export function hatchSegments(
  * (concave part, hole) starts new chains.
  */
 export function fillPolylines(polygon: P[], spacing: number, inset = 0): P[][] {
+  return chainRows(hatchSegments(polygon, 0, spacing, inset, true));
+}
+
+/**
+ * Chains horizontal fill segments into zigzag polylines: consecutive rows with a
+ * single segment join up; a row with several segments starts new chains.
+ */
+export function chainRows(segments: [P, P][]): P[][] {
   const rows = new Map<number, [P, P][]>();
-  for (const s of hatchSegments(polygon, 0, spacing, inset, true)) {
+  for (const s of segments) {
     const key = Math.round(s[0].y * 1000);
     rows.set(key, [...(rows.get(key) ?? []), s]);
   }

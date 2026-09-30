@@ -8,9 +8,11 @@ import {
   dashPolyline,
   ellipsePoints,
   fillPolylines,
+  chainRows,
   hatchSegments,
   meanSpacing,
 } from './patterns';
+import {areaSegments, enclosedArea} from './regions';
 import {
   ensureWriteAccess,
   errorText,
@@ -345,12 +347,15 @@ export async function applyFill(
   onReady();
   const size = await pageSize();
   const lines: object[] = [];
-  let open = 0;
+  // Strokes that are not closed on their own may still close an area together.
+  const openOutlines: {points: P[]; style: Style}[] = [];
   for (const e of targets) {
     const o = await outlineOf(e, size);
     const polygon = o && closedOutline(o.points);
+    if (o && !polygon) {
+      openOutlines.push(o);
+    }
     if (!o || !polygon) {
-      open++;
       continue;
     }
     const plan = fillPlan(fill, o.style.penWidth, density);
@@ -373,12 +378,15 @@ export async function applyFill(
       );
     }
   }
+  if (openOutlines.length) {
+    lines.push(...fillAcross(openOutlines, fill, density));
+  }
   release(all);
   if (!lines.length) {
     return {
       ok: false,
       message:
-        'Only closed shapes can be filled: close the outline and try again.',
+        'Nothing closed to fill: close the outline (ends may be drawn with separate strokes) and try again.',
     };
   }
   const done = await insertAll(lines);
@@ -388,8 +396,42 @@ export async function applyFill(
       message: `Only ${done} of ${lines.length} lines could be drawn.`,
     };
   }
-  return {
-    ok: true,
-    message: open ? `Filled; ${open} open line(s) skipped.` : 'Filled.',
+  return {ok: true, message: 'Filled.'};
+}
+
+/** Ends of separate strokes closer than this (px) are taken as joined. */
+const JOIN_GAP = 16;
+
+/**
+ * Hatching / fill of the areas enclosed by several strokes together (a triangle
+ * drawn in three strokes, sides crossing at the corners…). Drawn with the first
+ * stroke's pen.
+ */
+function fillAcross(
+  outlines: {points: P[]; style: Style}[],
+  fill: FillStyle,
+  density: number,
+): object[] {
+  const area = enclosedArea(
+    outlines.map(o => ({points: o.points, width: px(o.style.penWidth)})),
+    JOIN_GAP,
+  );
+  if (!area) {
+    return [];
+  }
+  const outlineWidth = Math.max(...outlines.map(o => o.style.penWidth));
+  const plan = fillPlan(fill, outlineWidth, density);
+  const style = {
+    ...outlines[0].style,
+    penWidth: plan.width,
+    penColor: fill.color,
   };
+  if (!('hatch' in fill)) {
+    return chainRows(areaSegments(area, 0, plan.spacing, plan.inset, true)).map(
+      c => geometry(c, style),
+    );
+  }
+  return areaSegments(area, fill.hatch, plan.spacing, plan.inset).map(s =>
+    geometry(s, style),
+  );
 }
