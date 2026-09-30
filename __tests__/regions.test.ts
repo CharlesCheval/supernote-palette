@@ -53,6 +53,23 @@ describe('areas closed by several strokes', () => {
     expect(Math.min(...segs.map(([p, q]) => Math.min(p.x, q.x)))).toBeLessThan(115);
   });
 
+  test('two circles, each partly erased, joined into one closed shape', () => {
+    // Left circle keeps its left 3/4, right circle its right 3/4: joined, they
+    // outline a figure-eight-like closed shape with an opening between them.
+    const arc = (cx: number, from: number, to: number) =>
+      Array.from({length: 60}, (_, i) => {
+        const a = from + ((to - from) * i) / 59;
+        return {x: cx + 100 * Math.cos(a), y: 300 + 100 * Math.sin(a)};
+      });
+    const left = arc(200, Math.PI / 4, (7 * Math.PI) / 4);
+    const right = arc(340, (5 * Math.PI) / 4, Math.PI * 2.75);
+    const area = enclosedArea([stroke(left), stroke(right)], 16);
+    expect(area).not.toBeNull();
+    const segs = areaSegments(area!, 0, 14, 2);
+    // One continuous region spanning both circles.
+    expect(segs.some(([p, q]) => Math.min(p.x, q.x) < 150 && Math.max(p.x, q.x) > 390)).toBe(true);
+  });
+
   test('a triangle with a 60 px gap is not closed', () => {
     const t = [line(A, B), line(B, C), line(C, {x: 145, y: 330})];
     expect(enclosedArea(t.map(p => stroke(p)), 16)).toBeNull();

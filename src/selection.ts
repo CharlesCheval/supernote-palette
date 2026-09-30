@@ -204,33 +204,65 @@ export async function applyStyle(
         'File access denied: allow it ("Always allow") to change the selection.',
     };
   }
+  // Right after a lasso resize, the host may accept the change but modify none
+  // of the elements (they are being re-committed): it then answers success with
+  // an empty list. So the result is checked, and the selection re-read and the
+  // change applied again, up to three times.
+  let last = '';
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) {
+      await new Promise<void>(r => setTimeout(r, 250));
+    }
+    const {elements, error} = await lassoElements();
+    if (error) {
+      return {ok: false, message: error};
+    }
+    const targets = elements.filter(e => isStroke(e) || isShape(e));
+    release(elements.filter(e => !targets.includes(e)));
+    if (!targets.length) {
+      return {ok: false, message: 'The selection has no strokes or shapes.'};
+    }
+    for (const e of targets) {
+      restyle(e, change);
+    }
+    const page =
+      ok<number>(await PluginCommAPI.getCurrentPageNum()) ?? targets[0].pageNum;
+    // No explicit layer: the host uses the current layer.
+    const res: any = await PluginCommAPI.modifyPageElements(targets, page);
+    const changed = ok<number[]>(res);
+    if (!changed) {
+      release(targets);
+      last = `Could not change the selection: ${errorText(res)}`;
+      continue;
+    }
+    if (Array.isArray(changed) && changed.length < targets.length) {
+      last = `Only ${changed.length} of ${targets.length} elements were updated.`;
+      continue;
+    }
+    // Modified elements stay referenced by the host: they are not recycled here.
+    if (await applied(change)) {
+      return {ok: true, message: `${targets.length} elements updated.`};
+    }
+    // Read back unchanged: apply again; if it still reads back unchanged after
+    // the last attempt, trust the host (which reported every element updated).
+    last = '';
+  }
+  return last ? {ok: false, message: last} : {ok: true, message: 'Updated.'};
+}
+
+/** Whether the selection, read again, shows the change. */
+async function applied(change: StyleChange): Promise<boolean> {
   const {elements, error} = await lassoElements();
   if (error) {
-    return {ok: false, message: error};
+    return true; // cannot check (selection dropped): trust the host's answer
   }
   const targets = elements.filter(e => isStroke(e) || isShape(e));
-  release(elements.filter(e => !targets.includes(e)));
-  if (!targets.length) {
-    return {ok: false, message: 'The selection has no strokes or shapes.'};
-  }
-  for (const e of targets) {
-    restyle(e, change);
-  }
-  const page =
-    ok<number>(await PluginCommAPI.getCurrentPageNum()) ?? targets[0].pageNum;
-  // No explicit layer: the host uses the current layer.
-  const res: any = await PluginCommAPI.modifyPageElements(targets, page);
-  const changed = ok<number[]>(res);
-  if (!changed) {
-    release(targets);
-    return {
-      ok: false,
-      message: `Could not change the selection: ${errorText(res)}`,
-    };
-  }
-  // Modified elements stay referenced by the host: they are not recycled here.
-  return {
-    ok: true,
-    message: `${changed.length} of ${targets.length} elements updated.`,
-  };
+  const ok_ = targets.every(e =>
+    'width' in change
+      ? (isShape(e) ? e.geometry!.penWidth || e.thickness : e.thickness) ===
+        change.width
+      : colorOf(e) === change.color,
+  );
+  release(elements);
+  return ok_;
 }

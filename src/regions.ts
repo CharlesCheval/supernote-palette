@@ -12,6 +12,8 @@
  * 4. Parallel lines are cut into the segments that run inside.
  */
 
+import {range} from './patterns';
+
 export type P = {x: number; y: number};
 export type Outline = {points: P[]; width: number};
 
@@ -103,16 +105,19 @@ export function enclosedArea(
   if (!all.length) {
     return null;
   }
-  const maxWidth = Math.max(...outlines.map(o => o.width));
+  const maxWidth = range(outlines.map(o => o.width)).max;
   const pad = gap + maxWidth + 4 * cell;
-  const x0 = Math.min(...all.map(p => p.x)) - pad;
-  const y0 = Math.min(...all.map(p => p.y)) - pad;
+  // Loops, not Math.min(...): strokes can hold tens of thousands of points.
+  const xs = range(all.map(p => p.x));
+  const ys = range(all.map(p => p.y));
+  const x0 = xs.min - pad;
+  const y0 = ys.min - pad;
   const grid: Grid = {
     x0,
     y0,
     cell,
-    cols: Math.ceil((Math.max(...all.map(p => p.x)) + pad - x0) / cell) + 1,
-    rows: Math.ceil((Math.max(...all.map(p => p.y)) + pad - y0) / cell) + 1,
+    cols: Math.ceil((xs.max + pad - x0) / cell) + 1,
+    rows: Math.ceil((ys.max + pad - y0) / cell) + 1,
   };
   const n = grid.cols * grid.rows;
   const ink = new Uint8Array(n); // the strokes as drawn
@@ -202,10 +207,10 @@ export function areaSegments(
   }
   const first = lo + (edgeToEdge ? inset : Math.max(inset, spacing / 2));
   const last = hi - inset;
-  const range = last - first;
+  const span = last - first;
   const step =
-    edgeToEdge && range > 0
-      ? range / Math.max(1, Math.ceil(range / spacing))
+    edgeToEdge && span > 0
+      ? span / Math.max(1, Math.ceil(span / spacing))
       : spacing;
   const ds = g.cell / 2;
   const out: [P, P][] = [];

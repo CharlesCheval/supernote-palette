@@ -25,10 +25,15 @@ Two rows under the colours act on the selection at once:
 - **Hatch**: "/" or "\\", in black or dark gray (one row of four). **Fill**: solid, in white, light gray, dark gray or black. Both are **added** inside every closed stroke or shape (ends less than 20% of its size apart), which stays; concave shapes and holes are handled (even-odd rule). Hatching uses the shape's pen, at most 0.4 wide; the **Density** row sets how close the lines are, 10 to 100 % in steps of 10 (100 % = a base gap of 14 px, or 3 line widths for thick pens; 50 % by default = twice that gap; saved across restarts, like ShapeSnap settings: as a folder name in the plugin directory, `src/settings.ts`); fills use 12 px lines at most 8 px apart, from edge to edge, kept off the outline.
 - **Speed**: all the lines are created at once and inserted in a single `insertPageElements` call, instead of one `insertGeometry` (and one page redraw) per line. If the host refuses the batch, the lines are inserted one by one as before. The single insertion may clear the undo history (to confirm on the device); one-by-one insertion keeps it.
 - **Shapes closed by several strokes** (a triangle drawn in three strokes, sides crossing at the corners, ends that almost meet) are filled too: the strokes that are not closed on their own are drawn together on a 2 px grid, thickened by 16 px so that nearly meeting ends join; whatever cannot be reached from outside is enclosed, then grown back to the real lines (`src/regions.ts`, unit-tested). Gaps wider than about 30 px stay open.
+- **Erased and joined shapes**: a partial eraser keeps one element and hides the erased points (draw flags); only the visible runs count. When the pieces are not all closed on their own, all of them, closed ones included, are taken together as the walls of the area to fill, so two shapes cut with the eraser and joined up fill as one.
 - Read back from the page, a circle's or ellipse's radius fields hold **twice** the drawn radius (measured on a Manta), unlike what `insertGeometry` takes: outlines halve them.
 - The panel closes as soon as the selection is read, so the page shows while it is edited; it reopens only to report a failure.
 
 Supernote has no dashed or filled style, so all of them are made of plain geometries (`GEO_polygon` polylines): a solid fill is a zigzag of lines closer than their width. Geometry is in `src/patterns.ts` (unit-tested), SDK calls in `src/effects.ts`.
+
+## Reliability of width and colour changes
+
+Right after a lasso resize, the host may accept `modifyPageElements` but modify none of the elements (it answers success with an empty list), which left the change to a second try. The result is now checked (every element updated, and the selection read back shows the new value); otherwise the selection is read again and the change applied again, up to three times.
 
 ## Width units
 

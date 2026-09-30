@@ -11,6 +11,8 @@ import {
   chainRows,
   hatchSegments,
   meanSpacing,
+  range,
+  visibleRuns,
 } from './patterns';
 import {areaSegments, enclosedArea} from './regions';
 import {
@@ -346,42 +348,30 @@ export async function applyFill(
   }
   onReady();
   const size = await pageSize();
-  const lines: object[] = [];
-  // Strokes that are not closed on their own may still close an area together.
-  const openOutlines: {points: P[]; style: Style}[] = [];
+  // Visible pieces of every selected stroke / shape: a partly erased stroke
+  // stays one element with hidden points, and only its visible runs count.
+  const pieces: {points: P[]; style: Style}[] = [];
   for (const e of targets) {
     const o = await outlineOf(e, size);
-    const polygon = o && closedOutline(o.points);
-    if (o && !polygon) {
-      openOutlines.push(o);
+    if (o) {
+      const runs = visibleRuns(o.points, await drawFlags(e, o.points.length));
+      pieces.push(...runs.map(points => ({points, style: o.style})));
     }
-    if (!o || !polygon) {
-      continue;
-    }
-    const plan = fillPlan(fill, o.style.penWidth, density);
-    const style = {
-      ...o.style,
-      penWidth: plan.width,
-      penColor: fill.color,
-    };
-    if (!('hatch' in fill)) {
-      lines.push(
-        ...fillPolylines(polygon, plan.spacing, plan.inset).map(c =>
-          geometry(c, style),
-        ),
-      );
-    } else {
-      lines.push(
-        ...hatchSegments(polygon, fill.hatch, plan.spacing, plan.inset).map(s =>
-          geometry(s, style),
-        ),
-      );
-    }
-  }
-  if (openOutlines.length) {
-    lines.push(...fillAcross(openOutlines, fill, density));
   }
   release(all);
+  const closed = pieces.map(o => closedOutline(o.points));
+  const lines: object[] = [];
+  if (pieces.length && closed.every(Boolean)) {
+    // Every piece closed on its own: fill each exactly, from its outline.
+    pieces.forEach((o, i) =>
+      lines.push(...fillPolygon(closed[i]!, o.style, fill, density)),
+    );
+  } else if (pieces.length) {
+    // Otherwise the pieces may close areas together (joined strokes, shapes cut
+    // with the eraser and joined up…): all of them, closed ones included, are
+    // taken as the walls.
+    lines.push(...fillAcross(pieces, fill, density));
+  }
   if (!lines.length) {
     return {
       ok: false,
@@ -397,6 +387,38 @@ export async function applyFill(
     };
   }
   return {ok: true, message: 'Filled.'};
+}
+
+/** Lines inside one closed outline. */
+function fillPolygon(
+  polygon: P[],
+  outline: Style,
+  fill: FillStyle,
+  density: number,
+): object[] {
+  const plan = fillPlan(fill, outline.penWidth, density);
+  const style = {...outline, penWidth: plan.width, penColor: fill.color};
+  if (!('hatch' in fill)) {
+    return fillPolylines(polygon, plan.spacing, plan.inset).map(c =>
+      geometry(c, style),
+    );
+  }
+  return hatchSegments(polygon, fill.hatch, plan.spacing, plan.inset).map(s =>
+    geometry(s, style),
+  );
+}
+
+/** A stroke's per-point draw flags (false = erased), or null when it has none. */
+async function drawFlags(e: Element, n: number): Promise<boolean[] | null> {
+  try {
+    const flags = e.stroke?.flagDraw;
+    if (!isStroke(e) || !flags || (await flags.size()) !== n) {
+      return null;
+    }
+    return await flags.getRange(0, n);
+  } catch {
+    return null;
+  }
 }
 
 /** Ends of separate strokes closer than this (px) are taken as joined. */
@@ -419,7 +441,7 @@ function fillAcross(
   if (!area) {
     return [];
   }
-  const outlineWidth = Math.max(...outlines.map(o => o.style.penWidth));
+  const outlineWidth = range(outlines.map(o => o.style.penWidth)).max;
   const plan = fillPlan(fill, outlineWidth, density);
   const style = {
     ...outlines[0].style,

@@ -8,6 +8,8 @@ import {
   fillPolylines,
   hatchSegments,
   meanSpacing,
+  range,
+  visibleRuns,
 } from '../src/patterns';
 
 const len = (pts: P[]) => pts.slice(1).reduce((s, p, i) => s + Math.hypot(p.x - pts[i].x, p.y - pts[i].y), 0);
@@ -133,4 +135,17 @@ test('fill rows reach both edges, evenly spaced', () => {
   const gaps = rows.slice(1).map((y, i) => y - rows[i]);
   expect(Math.max(...gaps)).toBeLessThanOrEqual(8 + 1e-9);
   expect(Math.max(...gaps) - Math.min(...gaps)).toBeLessThan(1e-4);
+});
+
+test('range handles very long strokes without spreading them', () => {
+  const many = Array.from({length: 200000}, (_, i) => i % 997);
+  expect(range(many)).toEqual({min: 0, max: 996});
+});
+
+test('visible runs: erased points split a stroke', () => {
+  const pts = Array.from({length: 10}, (_, i) => ({x: i, y: 0}));
+  const flags = [true, true, true, false, false, true, true, false, true, true];
+  expect(visibleRuns(pts, flags).map(r => r.map(p => p.x))).toEqual([[0, 1, 2], [5, 6], [8, 9]]);
+  expect(visibleRuns(pts, null)).toEqual([pts]);
+  expect(visibleRuns(pts, [true])).toEqual([pts]); // mismatched flags: ignored
 });

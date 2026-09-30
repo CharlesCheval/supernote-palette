@@ -93,17 +93,16 @@ export function hatchSegments(
   const u = {x: Math.cos(a), y: Math.sin(a)}; // along the lines
   const n = {x: -u.y, y: u.x}; // across them
   const across = polygon.map(p => p.x * n.x + p.y * n.y);
-  const lo = Math.min(...across);
-  const hi = Math.max(...across);
+  const {min: lo, max: hi} = range(across);
   const out: [P, P][] = [];
   // Hatching: lines centred in the shape. Fill (edge to edge): the first and last
   // lines sit exactly at the inset, the others evenly between, at most `spacing` apart.
   const firstRow = lo + (edgeToEdge ? inset : Math.max(inset, spacing / 2));
   const lastRow = hi - inset;
-  const range = lastRow - firstRow;
+  const span = lastRow - firstRow;
   const step =
-    edgeToEdge && range > 0
-      ? range / Math.max(1, Math.ceil(range / spacing))
+    edgeToEdge && span > 0
+      ? span / Math.max(1, Math.ceil(span / spacing))
       : spacing;
   for (let c = firstRow; c <= lastRow + 1e-9; c += step) {
     const hits: number[] = [];
@@ -188,12 +187,9 @@ export function closedOutline(points: P[]): P[] | null {
   if (points.length < 3) {
     return null;
   }
-  const xs = points.map(p => p.x);
-  const ys = points.map(p => p.y);
-  const size = Math.max(
-    Math.max(...xs) - Math.min(...xs),
-    Math.max(...ys) - Math.min(...ys),
-  );
+  const xs = range(points.map(p => p.x));
+  const ys = range(points.map(p => p.y));
+  const size = Math.max(xs.max - xs.min, ys.max - ys.min);
   if (size <= 0 || dist(points[0], points[points.length - 1]) > 0.2 * size) {
     return null;
   }
@@ -256,4 +252,46 @@ export function meanSpacing(points: P[]): number {
     total += dist(points[i - 1], points[i]);
   }
   return points.length > 1 ? total / (points.length - 1) : 0;
+}
+
+/** Smallest and largest of many values, without spreading them into a call (stack-safe). */
+export function range(values: Iterable<number>): {min: number; max: number} {
+  let min = Infinity;
+  let max = -Infinity;
+  for (const v of values) {
+    if (v < min) {
+      min = v;
+    }
+    if (v > max) {
+      max = v;
+    }
+  }
+  return {min, max};
+}
+
+/**
+ * The visible runs of a stroke: a partial eraser keeps ONE element and hides the
+ * erased points through its draw flags (false = hidden). Runs shorter than two
+ * points are dropped. Without flags, the whole stroke is one run.
+ */
+export function visibleRuns(points: P[], flags?: readonly boolean[] | null): P[][] {
+  if (!flags || flags.length !== points.length) {
+    return [points];
+  }
+  const runs: P[][] = [];
+  let run: P[] = [];
+  points.forEach((p, i) => {
+    if (flags[i] !== false) {
+      run.push(p);
+    } else {
+      if (run.length > 1) {
+        runs.push(run);
+      }
+      run = [];
+    }
+  });
+  if (run.length > 1) {
+    runs.push(run);
+  }
+  return runs;
 }
