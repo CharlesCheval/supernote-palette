@@ -217,7 +217,19 @@ export async function commitMove(): Promise<{ok: boolean; message: string}> {
       message: 'File access denied: the note cannot be saved first.',
     };
   }
-  const saved: any = await PluginNoteAPI.saveCurrentNote();
+  const step = <T>(work: Promise<T>) =>
+    withTimeout(work as Promise<any>, 5000, {
+      success: false,
+      error: {message: 'timeout', code: '-'},
+    });
+  const saved: any = await step(
+    PluginNoteAPI.saveCurrentNote() as Promise<any>,
+  );
+  trace(
+    `save: ${
+      saved?.success && saved.result !== false ? 'ok' : errorText(saved)
+    }`,
+  );
   if (!saved?.success || saved.result === false) {
     return {
       ok: false,
@@ -226,9 +238,21 @@ export async function commitMove(): Promise<{ok: boolean; message: string}> {
       )}).`,
     };
   }
-  const let_go: any = await PluginCommAPI.setLassoBoxState(2);
-  if (!ok<boolean>(let_go)) {
-    return {ok: false, message: `Not done: ${errorText(let_go)}`};
+  // Measured (test.23): saving applies the pending move and lets the lasso go
+  // by itself. The lasso is let go here only if it is still there.
+  const still: any = await step(
+    PluginCommAPI.getLassoElements() as Promise<any>,
+  );
+  if (ok<Element[]>(still)) {
+    const letGo: any = await step(
+      PluginCommAPI.setLassoBoxState(2) as Promise<any>,
+    );
+    trace(`let go: ${ok<boolean>(letGo) ? 'ok' : errorText(letGo)}`);
+    if (!ok<boolean>(letGo)) {
+      return {ok: false, message: `Not done: ${errorText(letGo)}`};
+    }
+  } else {
+    trace('lasso already let go by the save');
   }
   const target = {
     left: Math.floor(r.preview.left),
@@ -236,7 +260,14 @@ export async function commitMove(): Promise<{ok: boolean; message: string}> {
     right: Math.ceil(r.preview.right),
     bottom: Math.ceil(r.preview.bottom),
   };
-  await PluginCommAPI.lassoElements(target);
+  const lassoed: any = await step(
+    PluginCommAPI.lassoElements(target) as Promise<any>,
+  );
+  trace(
+    `lasso ${fmtRect(target)}: ${
+      ok<boolean>(lassoed) ? 'ok' : errorText(lassoed)
+    }`,
+  );
   const after = await lassoElements();
   const got = makeup(after.elements);
   const size = await pageSize();

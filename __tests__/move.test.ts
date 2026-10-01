@@ -81,3 +81,24 @@ test('the note cannot be saved: the lasso is not touched', async () => {
   expect(api.setLassoBoxState).not.toHaveBeenCalled();
   expect(api.lassoElements).not.toHaveBeenCalled();
 });
+
+test('the save already let the lasso go (measured): no second let-go, straight to the reselect', async () => {
+  let gone = false;
+  note.saveCurrentNote.mockImplementation(async () => {
+    mockCalls.push('save');
+    gone = true;
+    return {success: true, result: true};
+  });
+  api.getLassoElements.mockImplementation(async () =>
+    gone ? {success: false, error: {message: 'No lasso action has been performed', code: 904}} : {success: true, result: selection},
+  );
+  api.lassoElements.mockImplementation(async () => {
+    mockCalls.push('lasso');
+    gone = false;
+    selection = [shape(7, 1000, 300), shape(8, 1025, 250)];
+    return {success: true, result: true};
+  });
+  const res = await commitMove();
+  expect(res.ok).toBe(true);
+  expect(mockCalls).toEqual(['save', 'lasso']);
+});
