@@ -136,6 +136,7 @@ export async function pageElements(
   const path = ok<string>(await PluginCommAPI.getCurrentFilePath());
   const page = ok<number>(await PluginCommAPI.getCurrentPageNum());
   if (!path || page == null) {
+    trace(`page read: no ${path ? 'page' : 'file path'}`);
     return {elements: [], error: 'Could not read the page.'};
   }
   PluginCommAPI.clearElementCache();
@@ -159,18 +160,28 @@ export async function pageElements(
         };
   }
   const elements: Element[] = [];
+  let why = '';
   for (const n of nums) {
-    const e = ok<Element>(
-      await withTimeout(
-        PluginFileAPI.getElement(path, page, n) as Promise<any>,
-        LASSO_CALL_MS,
-        null,
-      ),
+    const res: any = await withTimeout(
+      PluginFileAPI.getElement(path, page, n) as Promise<any>,
+      LASSO_CALL_MS,
+      null,
     );
+    const e = ok<Element>(res);
     if (e) {
       elements.push(e);
+    } else {
+      why = errorText(res);
     }
   }
+  trace(
+    `page read p${page}: ${elements.length}/${nums.length}${
+      why ? ` · ${why}` : ''
+    } · uuids ${elements
+      .slice(0, 3)
+      .map(e => String(e.uuid).slice(0, 6))
+      .join(',')}`,
+  );
   return elements.length
     ? {elements}
     : {
@@ -274,7 +285,37 @@ export async function settleLasso(): Promise<Settled> {
       return keepAll;
     }
 
-    // Find the selected elements again on the page.
+    // No transform pending: the lasso made again on its own box holds the
+    // same elements (what worked before). Checked by uuid or number.
+    const nums0 = new Set(nums);
+    const same = (e: Element) => uuids.has(e.uuid) || nums0.has(e.numInPage);
+    if (box && (!size || box.right <= 1.3 * size.width)) {
+      await withTimeout(
+        PluginCommAPI.lassoElements({
+          left: Math.floor(box.left),
+          top: Math.floor(box.top),
+          right: Math.ceil(box.right),
+          bottom: Math.ceil(box.bottom),
+        }) as Promise<any>,
+        LASSO_CALL_MS,
+        null,
+      );
+      const again = await withTimeout(lassoElements(), LASSO_CALL_MS, {
+        elements: [],
+        error: 'timeout',
+      });
+      const kept = again.elements.filter(same).length;
+      trace(
+        `re-lasso on box: ${
+          again.error ?? `${again.elements.length} el., ${kept} selected before`
+        }`,
+      );
+      if (kept > 0) {
+        return {keep: same, lassoed: true, read: lassoElements};
+      }
+    }
+
+    // Moved: find the selected elements again on the page.
     const matches = async (candidates: number[]) => {
       const {elements} = await pageElements(candidates);
       // By uuid first; then, for what is still missing, by type and point

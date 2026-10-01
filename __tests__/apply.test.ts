@@ -94,18 +94,35 @@ test('moved selection: lasso let go, elements found again, lasso made around the
   api.getLassoElements.mockImplementation(async () => ({success: true, result: lassoed}));
   lassoMocks({left: -18, top: -18, right: 618, bottom: 618}); // the box BEFORE the move
   page = {3: shape(3, 300, 'g3', 1000), 4: shape(4, 300, 'g4', 1000), 7: shape(7, 50, 'n7', 1100)};
-  api.lassoElements = jest.fn(async () => {
-    lassoed = [page[3], page[4], page[7]]; // the rectangle also catches a neighbour
-    return {success: true, result: true};
+  // The old box is empty now; around the new place, a neighbour is also caught.
+  api.lassoElements = jest.fn(async (r: any) => {
+    lassoed = r.left > 900 ? [page[3], page[4], page[7]] : [];
+    return {success: true, result: lassoed.length > 0};
   });
   startAction();
   const res = await applyStyle({width: 300});
   expect(res.ok).toBe(true);
   expect(api.setLassoBoxState).toHaveBeenCalledWith(2);
-  const rect = api.lassoElements.mock.calls[0][0];
+  const rect = api.lassoElements.mock.calls[1][0];
   expect(rect.left).toBeGreaterThan(900); // the new place, not the old box
   const modified = api.modifyPageElements.mock.calls[0][0].map((e: any) => e.numInPage);
   expect(modified).toEqual([3, 4]); // not the neighbour
+});
+
+test('not moved: the lasso is made again on its own box, the page is not read', async () => {
+  let lassoed: any[] = [shape(3, 600), shape(4, 600)];
+  api.getLassoElements.mockImplementation(async () => ({success: true, result: lassoed}));
+  lassoMocks({left: -18, top: -18, right: 618, bottom: 618});
+  api.lassoElements = jest.fn(async () => {
+    lassoed = [shape(3, 600), shape(4, 600)];
+    return {success: true, result: true};
+  });
+  startAction();
+  const res = await applyStyle({width: 300});
+  expect(res.ok).toBe(true);
+  expect(api.lassoElements).toHaveBeenCalledTimes(1);
+  expect(file.getElement).not.toHaveBeenCalled();
+  expect(stored).toBe(300);
 });
 
 test('renumbered by the commit: found among the newest elements by uuid', async () => {
@@ -113,8 +130,8 @@ test('renumbered by the commit: found among the newest elements by uuid', async 
   api.getLassoElements.mockImplementation(async () => ({success: true, result: lassoed}));
   lassoMocks({left: -18, top: -18, right: 618, bottom: 618});
   page = {1: shape(1, 80, 'x1'), 3: shape(3, 90, 'x3'), 4: shape(4, 90, 'x4'), 9: shape(9, 300, 'g3', 1000), 10: shape(10, 300, 'g4', 1000)};
-  api.lassoElements = jest.fn(async () => {
-    lassoed = [page[9], page[10]];
+  api.lassoElements = jest.fn(async (r: any) => {
+    lassoed = r.left > 900 ? [page[9], page[10]] : [];
     return {success: true, result: true};
   });
   startAction();
