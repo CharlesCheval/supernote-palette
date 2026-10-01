@@ -10,6 +10,7 @@ import {
 } from './outline';
 import {range} from './patterns';
 import {trace, traceStart} from './trace';
+import {ABANDONED, actionLive} from './session';
 import {StyleChange, colorName, restyle, restyleGeometry} from './style';
 
 export {errorText, isShape, isStroke, ok};
@@ -63,6 +64,11 @@ export async function lassoElements(): Promise<{
   elements: Element[];
   error?: string;
 }> {
+  // The SDK's native side keeps the last element it read in a one-entry memo
+  // that is never refreshed: the host hands out the SAME uuid for an element it
+  // changed (resized, restyled), so without this, its points and width were the
+  // old ones. Clearing the cache before every read makes it current.
+  PluginCommAPI.clearElementCache();
   const res: any = await PluginCommAPI.getLassoElements();
   const elements = ok<Element[]>(res);
   return elements
@@ -169,6 +175,9 @@ export async function settleLasso(): Promise<(e: Element) => boolean> {
       return keepAll;
     }
     trace('pending move/resize: committing (lasso let go, made again)');
+    if (!actionLive()) {
+      return keepAll;
+    }
     if (
       !ok<boolean>(
         await withTimeout(
@@ -337,6 +346,9 @@ async function applyToLassoShape(
     ...restyleGeometry(shapes[0], change),
     showLassoAfterInsert: true,
   };
+  if (!actionLive()) {
+    return ABANDONED;
+  }
   const mod: any = await PluginCommAPI.modifyLassoGeometry(shape);
   return ok<boolean>(mod)
     ? {ok: true, message: 'Shape updated.'}
@@ -364,61 +376,52 @@ export async function applyStyle(
         'File access denied: allow it ("Always allow") to change the selection.',
     };
   }
-  // Right after a lasso resize, the host may accept the change but modify none
-  // of the elements (they are being re-committed): it then answers success with
-  // an empty list. So the result is checked, and the selection re-read and the
-  // change applied again, up to three times.
-  let last = '';
-  for (let attempt = 0; attempt < 3; attempt++) {
-    if (attempt > 0) {
-      await new Promise<void>(r => setTimeout(r, 250));
-    }
-    const {elements, error} = await lassoElements();
-    if (error) {
-      return {ok: false, message: error};
-    }
-    const targets = elements.filter(
-      e => (isStroke(e) || isShape(e)) && keep(e),
-    );
-    release(elements.filter(e => !targets.includes(e)));
-    if (!targets.length) {
-      return {ok: false, message: 'The selection has no strokes or shapes.'};
-    }
-    for (const e of targets) {
-      restyle(e, change);
-    }
-    const page =
-      ok<number>(await PluginCommAPI.getCurrentPageNum()) ?? targets[0].pageNum;
-    // No explicit layer: the host uses the current layer.
-    const res: any = await PluginCommAPI.modifyPageElements(targets, page);
-    const changed = ok<number[]>(res);
-    trace(
-      `try ${attempt + 1}: ${targets.length} el. → ${
-        changed
-          ? `${Array.isArray(changed) ? changed.length : '?'} modified`
-          : errorText(res)
-      }`,
-    );
-    if (!changed) {
-      release(targets);
-      last = `Could not change the selection: ${errorText(res)}`;
-      continue;
-    }
-    if (Array.isArray(changed) && changed.length < targets.length) {
-      last = `Only ${changed.length} of ${targets.length} elements were updated.`;
-      continue;
-    }
-    // Modified elements stay referenced by the host: they are not recycled here.
-    const stuck = await applied(change, keep);
-    trace(`read back: ${stuck ? 'changed' : 'unchanged'}`);
-    if (stuck) {
-      return {ok: true, message: `${targets.length} elements updated.`};
-    }
-    // Read back unchanged: apply again; if it still reads back unchanged after
-    // the last attempt, trust the host (which reported every element updated).
-    last = '';
+  // One attempt only. Retrying (with a pause) could run after the panel had
+  // closed and resume when it was opened again, dropping the new selection.
+  const {elements, error} = await lassoElements();
+  if (error) {
+    return {ok: false, message: error};
   }
-  return last ? {ok: false, message: last} : {ok: true, message: 'Updated.'};
+  const targets = elements.filter(e => (isStroke(e) || isShape(e)) && keep(e));
+  if (!targets.length) {
+    return {ok: false, message: 'The selection has no strokes or shapes.'};
+  }
+  for (const e of targets) {
+    restyle(e, change);
+  }
+  const page =
+    ok<number>(await PluginCommAPI.getCurrentPageNum()) ?? targets[0].pageNum;
+  if (!actionLive()) {
+    trace('abandoned: panel opened again');
+    return ABANDONED;
+  }
+  // No explicit layer: the host uses the current layer.
+  const res: any = await PluginCommAPI.modifyPageElements(targets, page);
+  const changed = ok<number[]>(res);
+  trace(
+    `modify: ${targets.length} el. → ${
+      changed
+        ? `${Array.isArray(changed) ? changed.length : '?'} modified`
+        : errorText(res)
+    }`,
+  );
+  if (!changed) {
+    return {
+      ok: false,
+      message: `Could not change the selection: ${errorText(res)}`,
+    };
+  }
+  if (Array.isArray(changed) && changed.length < targets.length) {
+    return {
+      ok: false,
+      message: `Only ${changed.length} of ${targets.length} elements were updated.`,
+    };
+  }
+  // Diagnostics only: what the selection reads like now.
+  trace(
+    `read back: ${(await applied(change, keep)) ? 'changed' : 'unchanged'}`,
+  );
+  return {ok: true, message: `${targets.length} elements updated.`};
 }
 
 /** Whether the selection, read again, shows the change. */

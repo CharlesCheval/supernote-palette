@@ -6,11 +6,13 @@ jest.mock('sn-plugin-lib', () => ({
     getCurrentPageNum: jest.fn(async () => ({success: true, result: 0})),
     modifyPageElements: jest.fn(),
     recycleElement: jest.fn(),
+    clearElementCache: jest.fn(),
   },
   PluginManager: {hasPermission: jest.fn(async () => 1)},
 }));
 import {PluginCommAPI} from 'sn-plugin-lib';
 import {applyStyle} from '../src/selection';
+import {newOpening, startAction} from '../src/session';
 
 const api = PluginCommAPI as any;
 /** A fresh copy of the selection on every read, as the host returns it. */
@@ -23,40 +25,39 @@ beforeEach(() => {
   api.getLassoElements.mockImplementation(async () => ({success: true, result: [stroke(), stroke()]}));
 });
 
-test('right after a resize: success with no element modified → applied again', async () => {
-  api.modifyPageElements
-    .mockImplementationOnce(async () => ({success: true, result: []}))
-    .mockImplementation(async (els: any[]) => {
-      stored = els[0].thickness;
-      return {success: true, result: [3, 4]};
-    });
-  const res = await applyStyle({width: 300});
-  expect(res.ok).toBe(true);
-  expect(api.modifyPageElements).toHaveBeenCalledTimes(2);
-  expect(stored).toBe(300);
-});
-
-test('reported success but not applied on read-back → applied again', async () => {
-  let calls = 0;
+test('one attempt: the change is applied once, on fresh copies', async () => {
   api.modifyPageElements.mockImplementation(async (els: any[]) => {
-    calls++;
-    if (calls > 1) {
-      stored = els[0].thickness;
-    }
+    stored = els[0].thickness;
     return {success: true, result: [3, 4]};
   });
+  startAction();
   const res = await applyStyle({width: 300});
   expect(res.ok).toBe(true);
-  expect(calls).toBe(2);
+  expect(api.modifyPageElements).toHaveBeenCalledTimes(1);
   expect(stored).toBe(300);
+  // The native element cache is cleared before every read of the lasso.
+  expect(api.clearElementCache.mock.calls.length).toBe(api.getLassoElements.mock.calls.length);
 });
 
-test('a refusal is reported after three attempts', async () => {
+test('a refusal is reported at once, never retried', async () => {
   api.modifyPageElements.mockImplementation(async () => ({success: false, error: {message: 'nope', code: 9}}));
+  startAction();
   const res = await applyStyle({width: 300});
   expect(res.ok).toBe(false);
   expect(res.message).toMatch(/nope/);
-  expect(api.modifyPageElements).toHaveBeenCalledTimes(3);
+  expect(api.modifyPageElements).toHaveBeenCalledTimes(1);
+});
+
+test('panel opened again during an action: the page is not touched', async () => {
+  api.modifyPageElements.mockImplementation(async () => ({success: true, result: [3, 4]}));
+  startAction();
+  api.getCurrentPageNum.mockImplementationOnce(async () => {
+    newOpening(); // the user reopens the panel while the action waits on the host
+    return {success: true, result: 0};
+  });
+  const res = await applyStyle({width: 300});
+  expect(res.ok).toBe(false);
+  expect(api.modifyPageElements).not.toHaveBeenCalled();
 });
 
 const shape = (n: number, box: number) => ({
@@ -87,6 +88,7 @@ test('a pending lasso resize is committed first: lasso let go and made again, or
     lassoed = [3, 4, 7]; // the rectangle also catches a neighbour
     return {success: true, result: true};
   });
+  startAction();
   const res = await applyStyle({width: 300});
   expect(res.ok).toBe(true);
   expect(api.setLassoBoxState).toHaveBeenCalledWith(2);
@@ -99,6 +101,7 @@ test('no pending transform: the lasso is left alone', async () => {
   api.getLassoElements.mockImplementation(async () => ({success: true, result: [shape(3, 600), shape(4, 600)]}));
   lassoMocks({left: -300, top: -250, right: 1100, bottom: 990}); // a loose hand-drawn lasso around the ink
   api.lassoElements = jest.fn();
+  startAction();
   const res = await applyStyle({width: 300});
   expect(res.ok).toBe(true);
   expect(api.setLassoBoxState).not.toHaveBeenCalled();

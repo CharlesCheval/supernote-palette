@@ -22,6 +22,7 @@ import {FILLS, FillStyle, HATCHES, applyDashes, applyFill} from './src/effects';
 import {DASH_STYLES, DashStyle} from './src/patterns';
 import {LIMITS, getSettings, subscribe, updateSettings} from './src/settings';
 import {PEN_COLORS, StyleChange} from './src/style';
+import {actionLive, newOpening, startAction} from './src/session';
 import {getTrace, subscribeTrace} from './src/trace';
 import {PRESETS_MM, formatMm, toInternal} from './src/widths';
 
@@ -184,7 +185,10 @@ function App(): React.JSX.Element {
   }, [toast]);
 
   const refresh = useCallback(() => {
-    // A new opening: an old error bubble would describe a previous selection.
+    // A new opening: an old error bubble would describe a previous selection,
+    // and an action still running from before must not touch the new one.
+    newOpening();
+    setBusy(false);
     setToast('');
     setSummary(null);
     readSummary()
@@ -222,6 +226,7 @@ function App(): React.JSX.Element {
     }
     setBusy(true);
     setToast('');
+    startAction();
     let closed = false;
     const close = () => {
       if (!closed) {
@@ -237,6 +242,9 @@ function App(): React.JSX.Element {
       failure = `Error: ${e?.message ?? e}`;
     } finally {
       setBusy(false);
+    }
+    if (!actionLive()) {
+      return; // the panel was opened again meanwhile: this result is old news
     }
     if (failure) {
       setToast(failure);
@@ -363,6 +371,11 @@ function App(): React.JSX.Element {
           </Text>
         ))}
       </ScrollView>
+      {/* The note around the panel: a tap there closes it. */}
+      <Pressable
+        style={styles.outside}
+        onPress={() => PluginManager.closePluginView()}
+      />
 
       {toast ? (
         <View style={styles.toastLayer} pointerEvents="box-none">
@@ -378,6 +391,7 @@ function App(): React.JSX.Element {
 const styles = StyleSheet.create({
   // Transparent around the card: if the host lets it through, the note shows behind.
   root: {flex: 1, backgroundColor: 'transparent'},
+  outside: {flex: 1},
   card: {
     flexGrow: 0,
     backgroundColor: '#ffffff',

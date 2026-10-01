@@ -25,6 +25,7 @@ import {
   settleLasso,
 } from './selection';
 import {getSettings} from './settings';
+import {ABANDONED, actionLive} from './session';
 import {
   Outline,
   Size,
@@ -105,6 +106,9 @@ async function insertOneByOne(geometries: object[]): Promise<number> {
  * Falls back to one insertGeometry per line if the batch is refused.
  */
 async function insertAll(geometries: object[]): Promise<number> {
+  if (!actionLive()) {
+    return 0;
+  }
   const page = ok<number>(await PluginCommAPI.getCurrentPageNum());
   if (page != null && geometries.length > 1) {
     try {
@@ -180,6 +184,9 @@ async function dashStrokes(
   }
   const page =
     ok<number>(await PluginCommAPI.getCurrentPageNum()) ?? strokes[0].pageNum;
+  if (!actionLive()) {
+    return {done: 0, why: ABANDONED.message};
+  }
   const res: any = await PluginCommAPI.modifyPageElements(strokes, page);
   return ok<number[]>(res)
     ? {done: strokes.length}
@@ -208,6 +215,9 @@ async function dashShapes(
   }
   const page =
     ok<number>(await PluginCommAPI.getCurrentPageNum()) ?? shapes[0].pageNum;
+  if (!actionLive()) {
+    return {done: 0, why: ABANDONED.message};
+  }
   const deleted: any = await PluginCommAPI.deletePageElements(
     shapes.map(e => e.numInPage),
     page,
