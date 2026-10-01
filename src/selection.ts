@@ -1,5 +1,18 @@
-import {Element, PluginCommAPI, PluginManager} from 'sn-plugin-lib';
-import {errorText, isShape, isStroke, ok, withTimeout} from './outline';
+import {
+  Element,
+  PluginCommAPI,
+  PluginManager,
+  PluginNoteAPI,
+} from 'sn-plugin-lib';
+import {
+  errorText,
+  isShape,
+  isStroke,
+  ok,
+  outlineOf,
+  pageSize,
+  withTimeout,
+} from './outline';
 import {trace, traceStart} from './trace';
 import {ABANDONED, actionLive} from './session';
 import {StyleChange, colorName, restyle, restyleGeometry} from './style';
@@ -91,23 +104,16 @@ export const release = (_elements: Element[]) => undefined;
 type Rect = {left: number; top: number; right: number; bottom: number};
 
 export const MOVED_MESSAGE =
-  'The selection was moved or resized: tap outside it, select it again, then apply.';
+  'The selection was moved or resized: use "Apply move & reselect", or tap outside and select it again.';
 
-/**
- * Whether the lasso holds a move or resize not yet applied to the page.
- *
- * Measured with the probe (test.21): while a transform is pending, the lasso
- * rect and the elements read still describe the selection BEFORE it, and
- * whatever is changed on the page is overwritten by the host's own transformed
- * copy when the lasso is let go. Only the lasso PREVIEW follows the transform:
- * its rect is the new one. So the two rects are compared. Read only: the lasso
- * is never driven (doing so duplicated selections and once crashed a note).
- */
-export async function lassoMoved(): Promise<boolean> {
+type Rects = {lasso: Rect; preview: Rect; rotate: number};
+
+/** The lasso rect and the lasso preview's rect, or null when either cannot be read. */
+async function lassoRects(): Promise<Rects | null> {
   try {
     const dir = await PluginManager.getPluginDirPath();
     if (!dir) {
-      return false;
+      return null;
     }
     const [rect, preview] = await Promise.all([
       withTimeout(PluginCommAPI.getLassoRect() as Promise<any>, 3000, null),
@@ -121,28 +127,150 @@ export async function lassoMoved(): Promise<boolean> {
     ]);
     const a = ok<Rect>(rect);
     const b = ok<{rect: Rect; rotateDegree: number}>(preview);
-    if (!a || !b?.rect) {
-      return false; // cannot tell: act as before
-    }
-    const moved =
-      Math.abs(a.left - b.rect.left) > 4 ||
-      Math.abs(a.top - b.rect.top) > 4 ||
-      Math.abs(a.right - b.rect.right) > 4 ||
-      Math.abs(a.bottom - b.rect.bottom) > 4 ||
-      Math.abs(b.rotateDegree || 0) > 0.5;
-    trace(
-      `lasso ${Math.round(a.left)},${Math.round(a.top)}–${Math.round(
-        a.right,
-      )},${Math.round(a.bottom)} · preview ${Math.round(
-        b.rect.left,
-      )},${Math.round(b.rect.top)}–${Math.round(b.rect.right)},${Math.round(
-        b.rect.bottom,
-      )}${moved ? ' · MOVED' : ''}`,
-    );
-    return moved;
+    return a && b?.rect
+      ? {lasso: a, preview: b.rect, rotate: b.rotateDegree || 0}
+      : null;
   } catch {
-    return false;
+    return null;
   }
+}
+
+const fmtRect = (r: Rect) =>
+  `${Math.round(r.left)},${Math.round(r.top)}–${Math.round(
+    r.right,
+  )},${Math.round(r.bottom)}`;
+
+const differs = (r: Rects) =>
+  Math.abs(r.lasso.left - r.preview.left) > 4 ||
+  Math.abs(r.lasso.top - r.preview.top) > 4 ||
+  Math.abs(r.lasso.right - r.preview.right) > 4 ||
+  Math.abs(r.lasso.bottom - r.preview.bottom) > 4 ||
+  Math.abs(r.rotate) > 0.5;
+
+/**
+ * Whether the lasso holds a move or resize not yet applied to the page.
+ *
+ * Measured with the probe (test.21): while a transform is pending, the lasso
+ * rect and the elements read still describe the selection BEFORE it, and
+ * whatever is changed on the page is overwritten by the host's own transformed
+ * copy when the lasso is let go. Only the lasso PREVIEW follows the transform:
+ * its rect is the new one. So the two rects are compared, read only.
+ */
+export async function lassoMoved(): Promise<boolean> {
+  const r = await lassoRects();
+  if (!r) {
+    return false; // cannot tell: act as before
+  }
+  const moved = differs(r);
+  trace(
+    `lasso ${fmtRect(r.lasso)} · preview ${fmtRect(r.preview)}${
+      moved ? ' · MOVED' : ''
+    }`,
+  );
+  return moved;
+}
+
+/** Strokes and each geometry type, counted: what a move must keep. */
+function makeup(elements: Element[]): string {
+  const counts = new Map<string, number>();
+  for (const e of elements) {
+    const k = isShape(e) ? `geo ${e.geometry!.type}` : `type ${e.type}`;
+    counts.set(k, (counts.get(k) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .sort()
+    .map(([k, n]) => `${n} ${k}`)
+    .join(', ');
+}
+
+/**
+ * On request only (a button shown when a move is pending): applies the pending
+ * move or resize and selects the same elements again, as the user would by
+ * tapping outside and lassoing them. Unlike test builds 16-19, which lassoed
+ * the OLD box and changed elements found on the page outside any lasso, this:
+ * 1. saves the note first, so a problem cannot cost more than the last action;
+ * 2. lets the lasso go (the host applies the transform), then lassoes the
+ *    preview rect, which is where the selection now is;
+ * 3. checks the new selection: same number and kinds of elements, ink inside
+ *    that rect. Otherwise the lasso is let go and nothing else is done.
+ * It never changes an element: the style is applied afterwards, by the usual
+ * route, on a normal selection.
+ */
+export async function commitMove(): Promise<{ok: boolean; message: string}> {
+  traceStart('Apply move & reselect');
+  const r = await lassoRects();
+  if (!r || !differs(r)) {
+    return {ok: true, message: 'No pending move: nothing to do.'};
+  }
+  const before = await lassoElements();
+  if (before.error || !before.elements.length) {
+    return {ok: false, message: before.error ?? 'Empty selection.'};
+  }
+  const expected = makeup(before.elements);
+  trace(`before: ${expected} · preview ${fmtRect(r.preview)}`);
+  if (!actionLive()) {
+    return ABANDONED;
+  }
+  if (!(await ensureWriteAccess())) {
+    return {
+      ok: false,
+      message: 'File access denied: the note cannot be saved first.',
+    };
+  }
+  const saved: any = await PluginNoteAPI.saveCurrentNote();
+  if (!saved?.success || saved.result === false) {
+    return {
+      ok: false,
+      message: `Not done: the note could not be saved first (${errorText(
+        saved,
+      )}).`,
+    };
+  }
+  const let_go: any = await PluginCommAPI.setLassoBoxState(2);
+  if (!ok<boolean>(let_go)) {
+    return {ok: false, message: `Not done: ${errorText(let_go)}`};
+  }
+  const target = {
+    left: Math.floor(r.preview.left),
+    top: Math.floor(r.preview.top),
+    right: Math.ceil(r.preview.right),
+    bottom: Math.ceil(r.preview.bottom),
+  };
+  await PluginCommAPI.lassoElements(target);
+  const after = await lassoElements();
+  const got = makeup(after.elements);
+  const size = await pageSize();
+  let inside = after.elements.length > 0;
+  for (const e of after.elements) {
+    const o = await outlineOf(e, size);
+    if (
+      !o ||
+      o.points.some(
+        p =>
+          p.x < target.left - 8 ||
+          p.x > target.right + 8 ||
+          p.y < target.top - 8 ||
+          p.y > target.bottom + 8,
+      )
+    ) {
+      inside = false;
+      break;
+    }
+  }
+  trace(`after: ${after.error ?? got}${inside ? '' : ' · ink outside'}`);
+  if (after.error || got !== expected || !inside) {
+    // Not exactly the same selection: nothing is selected rather than a wrong one.
+    await PluginCommAPI.setLassoBoxState(2);
+    return {
+      ok: false,
+      message:
+        'Move applied, but the selection could not be made again exactly: select it yourself.',
+    };
+  }
+  return {
+    ok: true,
+    message: 'Move applied and selected again: choose the change.',
+  };
 }
 
 export async function readSummary(): Promise<Summary> {

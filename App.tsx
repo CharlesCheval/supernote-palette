@@ -18,7 +18,7 @@ import {
   View,
 } from 'react-native';
 import {PluginManager} from 'sn-plugin-lib';
-import {Summary, applyStyle, readSummary} from './src/selection';
+import {Summary, applyStyle, commitMove, readSummary} from './src/selection';
 import {FILLS, FillStyle, HATCHES, applyDashes, applyFill} from './src/effects';
 import {DASH_STYLES, DashStyle} from './src/patterns';
 import {LIMITS, getSettings, subscribe, updateSettings} from './src/settings';
@@ -277,6 +277,24 @@ function App(): React.JSX.Element {
     }
   };
 
+  /** On request: applies a pending lasso move and selects the elements again. */
+  const applyMove = async () => {
+    if (busy) {
+      return;
+    }
+    setBusy(true);
+    startAction();
+    try {
+      const res = await commitMove();
+      setToast(res.message);
+    } catch (e: any) {
+      setToast(`Error: ${e?.message ?? e}`);
+    } finally {
+      setBusy(false);
+    }
+    readSummary().then(setSummary, () => undefined);
+  };
+
   const apply = (change: StyleChange) =>
     run(ready => applyStyle(change, ready));
 
@@ -387,6 +405,15 @@ function App(): React.JSX.Element {
           {summary?.hidden ? ` · hidden ${summary.hidden}` : ''}
         </Text>
         <View style={styles.probeRow}>
+          {summary?.moved ? (
+            <Pressable
+              style={[styles.probeButton, styles.moveButton]}
+              onPress={applyMove}>
+              <Text style={styles.probeText}>
+                {busy ? 'Working…' : 'Apply move & reselect'}
+              </Text>
+            </Pressable>
+          ) : null}
           <Pressable style={styles.probeButton} onPress={runProbe}>
             <Text style={styles.probeText}>
               {probing ? 'Probing…' : 'Probe lasso'}
@@ -542,6 +569,7 @@ const styles = StyleSheet.create({
     marginRight: 10,
   },
   probeText: {fontSize: 16, color: '#000000'},
+  moveButton: {borderWidth: 3},
   snapshot: {
     flexDirection: 'row',
     borderTopWidth: 1,
