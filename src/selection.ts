@@ -98,12 +98,12 @@ export function pendingTransform(box: Rect, ink: Rect, margin = 24): boolean {
 const LASSO_CALL_MS = 3000;
 
 /**
- * Right after a lasso move or resize, while the shape is still selected, the
- * host keeps the transform pending in the lasso: the elements it hands out are
- * the old ones, and changes made to the page only show once the lasso is let go
- * and made again. When the lasso box clearly no longer matches its elements,
- * the lasso is let go (committing the transform, as tapping elsewhere does) and
- * made again on the same area. Otherwise the lasso is left alone.
+ * After a lasso move or resize, while the shape is still selected, the host
+ * keeps the transform pending in the lasso, with its own copy of the elements,
+ * and writes that copy back when the lasso is let go: a change made to the page
+ * meanwhile was silently lost. Before every action the lasso is therefore let
+ * go (committing any transform, as tapping elsewhere does) and made again on
+ * its box, so the change applies to the elements as they now are.
  *
  * Returns a filter that keeps only the elements selected before, in case the
  * rectangular lasso also caught neighbours. Every host call is bounded in time;
@@ -163,18 +163,23 @@ export async function settleLasso(): Promise<(e: Element) => boolean> {
     ) {
       return keepAll;
     }
-    if (
-      !pendingTransform(box, {
-        left: xs.min,
-        top: ys.min,
-        right: xs.max,
-        bottom: ys.max,
-      })
-    ) {
-      trace('no pending move/resize: lasso left alone');
-      return keepAll;
-    }
-    trace('pending move/resize: committing (lasso let go, made again)');
+    // Measured: after a move or resize the host keeps its own transformed copy
+    // of the selection and writes it back when the lasso is let go, over any
+    // change made to the page meanwhile, and nothing read through the SDK tells
+    // that a transform is pending. So the lasso is ALWAYS let go first
+    // (committing any transform) and made again on its box.
+    trace(
+      `committing lasso (ink ${
+        pendingTransform(box, {
+          left: xs.min,
+          top: ys.min,
+          right: xs.max,
+          bottom: ys.max,
+        })
+          ? 'outside'
+          : 'inside'
+      } box)`,
+    );
     if (!actionLive()) {
       return keepAll;
     }
@@ -206,7 +211,25 @@ export async function settleLasso(): Promise<(e: Element) => boolean> {
     });
     const known = after.elements.filter(e => nums.has(e.numInPage)).length;
     const total = after.elements.length;
-    trace(`re-lasso: ${after.error ?? `${total} el., ${known} same numbers`}`);
+    const now = [];
+    for (const e of after.elements) {
+      const o = await outlineOf(e, size);
+      if (o) {
+        now.push(...o.points);
+      }
+    }
+    const nx = range(now.map(p => p.x));
+    const ny = range(now.map(p => p.y));
+    trace(
+      `re-lasso: ${
+        after.error ??
+        `${total} el., ${known} same numbers · ink ${
+          now.length
+            ? fmt({left: nx.min, top: ny.min, right: nx.max, bottom: ny.max})
+            : 'none'
+        }`
+      }`,
+    );
     release(after.elements);
     if (known > 0) {
       return e => nums.has(e.numInPage);

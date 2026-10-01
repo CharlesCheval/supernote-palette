@@ -97,15 +97,16 @@ test('a pending lasso resize is committed first: lasso let go and made again, or
   expect(modified).toEqual([3, 4]); // not the neighbour
 });
 
-test('no pending transform: the lasso is left alone', async () => {
+test('no visible transform: the lasso is still let go and made again', async () => {
   api.getLassoElements.mockImplementation(async () => ({success: true, result: [shape(3, 600), shape(4, 600)]}));
-  lassoMocks({left: -300, top: -250, right: 1100, bottom: 990}); // a loose hand-drawn lasso around the ink
-  api.lassoElements = jest.fn();
+  lassoMocks({left: -18, top: -18, right: 618, bottom: 618});
+  api.lassoElements = jest.fn(async () => ({success: true, result: true}));
   startAction();
   const res = await applyStyle({width: 300});
   expect(res.ok).toBe(true);
-  expect(api.setLassoBoxState).not.toHaveBeenCalled();
-  expect(api.lassoElements).not.toHaveBeenCalled();
+  expect(api.setLassoBoxState).toHaveBeenCalledWith(2);
+  expect(api.lassoElements).toHaveBeenCalledWith({left: -18, top: -18, right: 618, bottom: 618});
+  expect(stored).toBe(300);
 });
 
 test('pending transform: only when the ink sticks out of the box', () => {
