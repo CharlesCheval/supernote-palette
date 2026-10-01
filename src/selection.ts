@@ -72,22 +72,19 @@ export async function lassoElements(): Promise<{
 type Rect = {left: number; top: number; right: number; bottom: number};
 
 /**
- * Whether the lasso box no longer matches its elements: after a move or resize
- * still in progress, the box shows the new place and size while the elements
- * read are the old ones. Tolerance: 40 px or 15 % of the size, whichever is
- * larger (the box has some margin around the ink).
+ * Whether a move or resize is still pending in the lasso. A lasso drawn by hand
+ * always encloses the ink it selects, however loosely; while a shrink or a move
+ * is pending, the box is at the new place and size but the elements read are
+ * the old ones, so their ink sticks out of the box. That is the only signal
+ * used: a loose lasso (box much bigger than the ink) is normal, and an enlarge
+ * still pending cannot be told apart from it, so it is left alone.
  */
-export function pendingTransform(box: Rect, ink: Rect): boolean {
-  const w = (r: Rect) => r.right - r.left;
-  const h = (r: Rect) => r.bottom - r.top;
-  const tol = (v: number) => Math.max(40, 0.15 * v);
-  const cx = (r: Rect) => (r.left + r.right) / 2;
-  const cy = (r: Rect) => (r.top + r.bottom) / 2;
+export function pendingTransform(box: Rect, ink: Rect, margin = 24): boolean {
   return (
-    Math.abs(w(box) - w(ink)) > tol(w(ink)) + 40 ||
-    Math.abs(h(box) - h(ink)) > tol(h(ink)) + 40 ||
-    Math.abs(cx(box) - cx(ink)) > tol(w(ink)) ||
-    Math.abs(cy(box) - cy(ink)) > tol(h(ink))
+    ink.left < box.left - margin ||
+    ink.top < box.top - margin ||
+    ink.right > box.right + margin ||
+    ink.bottom > box.bottom + margin
   );
 }
 
@@ -187,8 +184,11 @@ export async function settleLasso(): Promise<(e: Element) => boolean> {
     if (known > 0) {
       return e => nums.has(e.numInPage);
     }
-    // Numbers changed by the commit: the new selection, if it is the same size.
-    return total === count ? keepAll : e => nums.has(e.numInPage);
+    // Numbers changed by the commit: the new selection, made on the shape's own
+    // resize box.
+    return total > 0 && total <= count + 2
+      ? keepAll
+      : e => nums.has(e.numInPage);
   } catch {
     return keepAll;
   }
