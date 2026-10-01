@@ -285,17 +285,56 @@ export async function settleLasso(): Promise<Settled> {
       return keepAll;
     }
 
-    // No transform pending: the lasso made again on its own box holds the
-    // same elements (what worked before). Checked by uuid or number.
-    const nums0 = new Set(nums);
-    const same = (e: Element) => uuids.has(e.uuid) || nums0.has(e.numInPage);
-    if (box && (!size || box.right <= 1.3 * size.width)) {
+    // Committing a move or resize RECREATES the elements: new number, new
+    // uuid (measured). So they are recognised by uuid (nothing was pending),
+    // else by what the transform keeps: a stroke's type and point count, or a
+    // shape's geometry type with a number newer than the old ones.
+    const newestBefore = Math.max(...nums);
+    const geoTypes = new Map<string, number>();
+    for (const e of before.elements) {
+      if (isShape(e)) {
+        const t = e.geometry!.type;
+        geoTypes.set(t, (geoTypes.get(t) ?? 0) + 1);
+      }
+    }
+    const identify = async (elements: Element[]) => {
+      // Not by number: once elements are recreated, the old numbers belong to
+      // other elements.
+      const found = elements.filter(e => uuids.has(e.uuid));
+      if (found.length) {
+        return found; // nothing was recreated
+      }
+      const strokesLeft = new Map(prints);
+      const shapesLeft = new Map(geoTypes);
+      for (const e of elements) {
+        if (found.length >= count) {
+          break;
+        }
+        if (isStroke(e)) {
+          const o = await outlineOf(e, size);
+          const n = o?.points.length ?? 0;
+          const key = `${e.type}:${n}`;
+          if (n >= 10 && (strokesLeft.get(key) ?? 0) > 0) {
+            strokesLeft.set(key, strokesLeft.get(key)! - 1);
+            found.push(e);
+          }
+        } else if (isShape(e) && e.numInPage > newestBefore) {
+          const t = e.geometry!.type;
+          if ((shapesLeft.get(t) ?? 0) > 0) {
+            shapesLeft.set(t, shapesLeft.get(t)! - 1);
+            found.push(e);
+          }
+        }
+      }
+      return found;
+    };
+    const lassoOn = async (r: Rect) => {
       await withTimeout(
         PluginCommAPI.lassoElements({
-          left: Math.floor(box.left),
-          top: Math.floor(box.top),
-          right: Math.ceil(box.right),
-          bottom: Math.ceil(box.bottom),
+          left: Math.max(0, Math.floor(r.left)),
+          top: Math.max(0, Math.floor(r.top)),
+          right: Math.ceil(r.right),
+          bottom: Math.ceil(r.bottom),
         }) as Promise<any>,
         LASSO_CALL_MS,
         null,
@@ -304,53 +343,57 @@ export async function settleLasso(): Promise<Settled> {
         elements: [],
         error: 'timeout',
       });
-      const kept = again.elements.filter(same).length;
+      const found = await identify(again.elements);
       trace(
-        `re-lasso on box: ${
-          again.error ?? `${again.elements.length} el., ${kept} selected before`
+        `re-lasso ${fmt(r)}: ${
+          again.error ??
+          `${again.elements.length} el., ${found.length} recognised #${found
+            .map(e => e.numInPage)
+            .join(',')}`
         }`,
       );
-      if (kept > 0) {
-        return {keep: same, lassoed: true, read: lassoElements};
+      return found;
+    };
+
+    // The lasso made again on its old box: holds the elements when nothing
+    // moved, and often the recreated ones after a shrink.
+    if (box && (!size || box.right <= 1.3 * size.width)) {
+      const found = await lassoOn(box);
+      if (found.length) {
+        const keepNums = new Set(found.map(e => e.numInPage));
+        return {
+          keep: e => keepNums.has(e.numInPage),
+          lassoed: true,
+          read: lassoElements,
+        };
       }
     }
 
-    // Moved: find the selected elements again on the page.
-    const matches = async (candidates: number[]) => {
-      const {elements} = await pageElements(candidates);
-      // By uuid first; then, for what is still missing, by type and point
-      // count (strokes only: a long stroke's point count is a good fingerprint).
-      const found = elements.filter(e => uuids.has(e.uuid));
-      const left = new Map(prints);
-      for (const e of found) {
-        const o = await outlineOf(e, size);
-        const key = `${e.type}:${o?.points.length ?? 0}`;
-        left.set(key, (left.get(key) ?? 0) - 1);
-      }
-      for (const e of elements) {
-        if (found.length >= count) {
-          break;
-        }
-        if (uuids.has(e.uuid) || !isStroke(e)) {
-          continue;
-        }
-        const o = await outlineOf(e, size);
-        const n = o?.points.length ?? 0;
-        const key = `${e.type}:${n}`;
-        if (n >= 10 && (left.get(key) ?? 0) > 0) {
-          left.set(key, left.get(key)! - 1);
-          found.push(e);
-        }
-      }
-      return found;
-    };
-    let found = await matches(nums);
-    let where = 'same numbers';
-    if (found.length < count) {
-      // Renumbered by the commit: look among the newest elements.
+    // Moved away: find the recreated elements on the page.
+    const matches = async (candidates: number[]) =>
+      identify((await pageElements(candidates)).elements);
+    let found: Element[] = [];
+    let where = 'last element';
+    if (count === 1) {
+      // One element: the recreated one is the page's last element.
+      PluginCommAPI.clearElementCache();
+      const res: any = await withTimeout(
+        PluginFileAPI.getLastElement() as Promise<any>,
+        LASSO_CALL_MS,
+        null,
+      );
+      const last = ok<Element>(res);
+      trace(
+        `last element: ${
+          last ? `#${last.numInPage} type ${last.type}` : errorText(res)
+        }`,
+      );
+      found = last ? await identify([last]) : [];
+    }
+    if (!found.length) {
+      await ensureReadAccess();
       const all = await pageNumbers();
-      const newest = all.slice(-(2 * count + 4));
-      found = await matches([...new Set([...nums, ...newest])]);
+      found = await matches(all.slice(-(2 * count + 4)));
       where = 'newest';
     }
     const foundNums = new Set(found.map(e => e.numInPage));
@@ -381,27 +424,21 @@ export async function settleLasso(): Promise<Settled> {
     }
     // Lasso made again around the ink as it now is.
     const pad = 6;
-    await withTimeout(
-      PluginCommAPI.lassoElements({
-        left: Math.max(0, Math.floor(ink.left - pad)),
-        top: Math.max(0, Math.floor(ink.top - pad)),
-        right: Math.ceil(ink.right + pad),
-        bottom: Math.ceil(ink.bottom + pad),
-      }) as Promise<any>,
-      LASSO_CALL_MS,
-      null,
-    );
-    const after = await withTimeout(lassoElements(), LASSO_CALL_MS, {
-      elements: [],
-      error: 'timeout',
+    const again = await lassoOn({
+      left: ink.left - pad,
+      top: ink.top - pad,
+      right: ink.right + pad,
+      bottom: ink.bottom + pad,
     });
-    const known = after.elements.filter(keep).length;
-    trace(
-      `re-lasso: ${
-        after.error ?? `${after.elements.length} el., ${known} selected before`
-      }`,
-    );
-    return known > 0 ? {keep, lassoed: true, read: lassoElements} : fromPage;
+    if (again.length) {
+      const keepNums = new Set(again.map(e => e.numInPage));
+      return {
+        keep: e => keepNums.has(e.numInPage),
+        lassoed: true,
+        read: lassoElements,
+      };
+    }
+    return fromPage;
   } catch (e: any) {
     trace(`lasso check failed: ${e?.message ?? e}`);
     return keepAll;
@@ -494,6 +531,33 @@ function rawRanges(elements: Element[]): string {
   ]
     .filter(Boolean)
     .join(' · ');
+}
+
+let readGranted = false;
+
+/** Reading the page by element number needs the file read permission (measured). */
+export async function ensureReadAccess(): Promise<boolean> {
+  if (readGranted) {
+    return true;
+  }
+  const permission = 'plugin.permission.FILE:READ';
+  try {
+    if ((await PluginManager.hasPermission(permission)) < 1) {
+      const choice = await PluginManager.requestPermission(
+        permission,
+        'Finding a moved selection again reads the page.',
+      );
+      if (choice !== 1 && choice !== 2) {
+        trace('file read permission refused');
+        return false;
+      }
+    }
+  } catch (e: any) {
+    trace(`file read permission: ${e?.message ?? e}`);
+    return false;
+  }
+  readGranted = true;
+  return true;
 }
 
 let writeGranted = false;

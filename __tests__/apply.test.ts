@@ -8,7 +8,7 @@ jest.mock('sn-plugin-lib', () => ({
     recycleElement: jest.fn(),
     clearElementCache: jest.fn(),
   },
-  PluginFileAPI: {getElement: jest.fn(), getElementNumList: jest.fn(), getElements: jest.fn()},
+  PluginFileAPI: {getElement: jest.fn(), getElementNumList: jest.fn(), getElements: jest.fn(), getLastElement: jest.fn()},
   PluginManager: {hasPermission: jest.fn(async () => 1)},
 }));
 import {PluginCommAPI, PluginFileAPI} from 'sn-plugin-lib';
@@ -123,6 +123,39 @@ test('not moved: the lasso is made again on its own box, the page is not read', 
   expect(api.lassoElements).toHaveBeenCalledTimes(1);
   expect(file.getElement).not.toHaveBeenCalled();
   expect(stored).toBe(300);
+});
+
+test('shrunk inside its old box: recreated (new number, new uuid), recognised in the re-lasso', async () => {
+  let lassoed: any[] = [shape(3, 600), shape(4, 600)];
+  api.getLassoElements.mockImplementation(async () => ({success: true, result: lassoed}));
+  lassoMocks({left: -18, top: -18, right: 618, bottom: 618});
+  api.lassoElements = jest.fn(async () => {
+    lassoed = [shape(11, 200, 'r1', 100), shape(12, 200, 'r2', 100)];
+    return {success: true, result: true};
+  });
+  startAction();
+  const res = await applyStyle({width: 300});
+  expect(res.ok).toBe(true);
+  expect(api.modifyPageElements.mock.calls[0][0].map((e: any) => e.numInPage)).toEqual([11, 12]);
+});
+
+test('one element moved out of its old box: found as the last element', async () => {
+  let lassoed: any[] = [shape(3, 600)];
+  api.getLassoElements.mockImplementation(async () => ({success: true, result: lassoed}));
+  api.getLassoGeometries = jest.fn(async () => ({success: true, result: [lassoed[0].geometry]}));
+  api.modifyLassoGeometry = jest.fn(async () => ({success: true, result: true}));
+  lassoMocks({left: -18, top: -18, right: 618, bottom: 618});
+  const moved = shape(20, 300, 'new', 1000);
+  file.getLastElement.mockImplementation(async () => ({success: true, result: moved}));
+  api.lassoElements = jest.fn(async (r: any) => {
+    lassoed = r.left > 900 ? [moved] : [];
+    return {success: true, result: lassoed.length > 0};
+  });
+  startAction();
+  const res = await applyStyle({width: 300});
+  expect(res.ok).toBe(true);
+  expect(api.lassoElements.mock.calls[1][0].left).toBeGreaterThan(900);
+  expect(api.modifyLassoGeometry).toHaveBeenCalled();
 });
 
 test('renumbered by the commit: found among the newest elements by uuid', async () => {
