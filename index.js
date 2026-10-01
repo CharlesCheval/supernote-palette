@@ -8,6 +8,7 @@ import {name as appName} from './app.json';
 
 import {PluginManager} from 'sn-plugin-lib';
 import {loadSettings} from './src/settings';
+import {feedMotion} from './src/probe';
 
 const BUTTON_WIDTH = 301;
 /** Lasso toolbar button shown when the selection holds strokes (0) or shapes (5). */
@@ -35,9 +36,16 @@ const BUTTON = {
  */
 const DIALOG = {regionType: 1, regionWidth: 1440, regionHeight: 1240};
 
-PluginManager.registerButton(2, ['NOTE', 'DOC'], {...BUTTON, ...DIALOG, showData: DIALOG})
+PluginManager.registerButton(2, ['NOTE', 'DOC'], {
+  ...BUTTON,
+  ...DIALOG,
+  showData: DIALOG,
+})
   .then(ok => ok || PluginManager.registerButton(2, ['NOTE', 'DOC'], BUTTON))
   .catch(() => PluginManager.registerButton(2, ['NOTE', 'DOC'], BUTTON));
+
+// Test builds: touch gestures, for the lasso probe (read only).
+PluginManager.registerMotionListener(1, {onMsg: feedMotion});
 
 PluginManager.registerButtonListener({
   onButtonPress(event) {
