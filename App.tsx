@@ -180,6 +180,8 @@ function App(): React.JSX.Element {
   }, [toast]);
 
   const refresh = useCallback(() => {
+    // A new opening: an old error bubble would describe a previous selection.
+    setToast('');
     setSummary(null);
     readSummary()
       .then(setSummary)

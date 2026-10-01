@@ -1,5 +1,17 @@
 import {Element, PluginCommAPI, PluginManager} from 'sn-plugin-lib';
+import {
+  errorText,
+  isShape,
+  isStroke,
+  ok,
+  outlineOf,
+  pageSize,
+  withTimeout,
+} from './outline';
+import {range} from './patterns';
 import {StyleChange, colorName, restyle, restyleGeometry} from './style';
+
+export {errorText, isShape, isStroke, ok};
 import {describeRange} from './widths';
 
 /**
@@ -32,19 +44,6 @@ export type Summary = {
 const lassoRoute = (strokes: number, shapes: number) =>
   strokes === 0 && shapes === 1;
 
-export function ok<T>(res: any): T | null {
-  return res?.success ? (res.result as T) : null;
-}
-
-export function errorText(res: any): string {
-  return res?.error
-    ? `${res.error.message ?? 'unknown'} (code ${res.error.code ?? '?'})`
-    : 'no result';
-}
-
-export const isStroke = (e: Element) => e.type === Element.TYPE_STROKE;
-export const isShape = (e: Element) =>
-  e.type === Element.TYPE_GEO && !!e.geometry;
 const widthOf = (e: Element) =>
   isShape(e) ? e.geometry!.penWidth || e.thickness : e.thickness;
 const colorOf = (e: Element) =>
@@ -70,48 +69,126 @@ export async function lassoElements(): Promise<{
     : {elements: [], error: `No lasso selection (${errorText(res)})`};
 }
 
+type Rect = {left: number; top: number; right: number; bottom: number};
+
+/**
+ * Whether the lasso box no longer matches its elements: after a move or resize
+ * still in progress, the box shows the new place and size while the elements
+ * read are the old ones. Tolerance: 40 px or 15 % of the size, whichever is
+ * larger (the box has some margin around the ink).
+ */
+export function pendingTransform(box: Rect, ink: Rect): boolean {
+  const w = (r: Rect) => r.right - r.left;
+  const h = (r: Rect) => r.bottom - r.top;
+  const tol = (v: number) => Math.max(40, 0.15 * v);
+  const cx = (r: Rect) => (r.left + r.right) / 2;
+  const cy = (r: Rect) => (r.top + r.bottom) / 2;
+  return (
+    Math.abs(w(box) - w(ink)) > tol(w(ink)) + 40 ||
+    Math.abs(h(box) - h(ink)) > tol(h(ink)) + 40 ||
+    Math.abs(cx(box) - cx(ink)) > tol(w(ink)) ||
+    Math.abs(cy(box) - cy(ink)) > tol(h(ink))
+  );
+}
+
+const LASSO_CALL_MS = 3000;
+
 /**
  * Right after a lasso move or resize, while the shape is still selected, the
  * host keeps the transform pending in the lasso: the elements it hands out are
  * the old ones, and changes made to the page only show once the lasso is let go
- * and made again. So, before acting, the lasso is let go (which commits the
- * transform, as tapping elsewhere does) and made again on the same area.
+ * and made again. When the lasso box clearly no longer matches its elements,
+ * the lasso is let go (committing the transform, as tapping elsewhere does) and
+ * made again on the same area. Otherwise the lasso is left alone.
  *
- * Returns a filter that keeps only the elements that were selected before, in
- * case the new rectangular lasso also caught neighbours. If the host refuses the
- * lasso calls, nothing is changed and every element is kept.
+ * Returns a filter that keeps only the elements selected before, in case the
+ * rectangular lasso also caught neighbours. Every host call is bounded in time;
+ * if anything fails, the lasso is not touched and every element is kept.
  */
 export async function settleLasso(): Promise<(e: Element) => boolean> {
   const keepAll = () => true;
   try {
-    const before = await lassoElements();
-    const nums = new Set(before.elements.map(e => e.numInPage));
-    const count = before.elements.length;
-    release(before.elements);
-    const rect = ok<{left: number; top: number; right: number; bottom: number}>(
-      await PluginCommAPI.getLassoRect(),
-    );
-    if (before.error || !rect) {
+    const before = await withTimeout(lassoElements(), LASSO_CALL_MS, {
+      elements: [],
+      error: 'timeout',
+    });
+    if (before.error || !before.elements.length) {
       return keepAll;
     }
-    if (!ok<boolean>(await PluginCommAPI.setLassoBoxState(2))) {
+    const nums = new Set(before.elements.map(e => e.numInPage));
+    const count = before.elements.length;
+    const size = await pageSize();
+    const box = ok<Rect>(
+      await withTimeout(
+        PluginCommAPI.getLassoRect() as Promise<any>,
+        LASSO_CALL_MS,
+        null,
+      ),
+    );
+    const pts = [];
+    for (const e of before.elements) {
+      const o = await outlineOf(e, size);
+      if (o) {
+        pts.push(...o.points);
+      }
+    }
+    release(before.elements);
+    // Only a box in page pixels can be compared (and lassoed again).
+    if (
+      !box ||
+      !size ||
+      !pts.length ||
+      box.right > 1.3 * size.width ||
+      box.bottom > 1.3 * size.height
+    ) {
+      return keepAll;
+    }
+    const xs = range(pts.map(p => p.x));
+    const ys = range(pts.map(p => p.y));
+    if (
+      !pendingTransform(box, {
+        left: xs.min,
+        top: ys.min,
+        right: xs.max,
+        bottom: ys.max,
+      })
+    ) {
+      return keepAll;
+    }
+    if (
+      !ok<boolean>(
+        await withTimeout(
+          PluginCommAPI.setLassoBoxState(2) as Promise<any>,
+          LASSO_CALL_MS,
+          null,
+        ),
+      )
+    ) {
       return keepAll;
     }
     const r = {
-      left: Math.floor(rect.left),
-      top: Math.floor(rect.top),
-      right: Math.ceil(rect.right),
-      bottom: Math.ceil(rect.bottom),
+      left: Math.floor(box.left),
+      top: Math.floor(box.top),
+      right: Math.ceil(box.right),
+      bottom: Math.ceil(box.bottom),
     };
-    await PluginCommAPI.lassoElements(r);
-    const after = await lassoElements();
+    await withTimeout(
+      PluginCommAPI.lassoElements(r) as Promise<any>,
+      LASSO_CALL_MS,
+      null,
+    );
+    const after = await withTimeout(lassoElements(), LASSO_CALL_MS, {
+      elements: [],
+      error: 'timeout',
+    });
     const known = after.elements.filter(e => nums.has(e.numInPage)).length;
+    const total = after.elements.length;
     release(after.elements);
-    // Same elements (numbers kept): keep only those. Numbers changed by the
-    // commit: fall back to the whole new selection if it has the same size.
-    return known === count || after.elements.length !== count
-      ? e => nums.has(e.numInPage)
-      : keepAll;
+    if (known > 0) {
+      return e => nums.has(e.numInPage);
+    }
+    // Numbers changed by the commit: the new selection, if it is the same size.
+    return total === count ? keepAll : e => nums.has(e.numInPage);
   } catch {
     return keepAll;
   }

@@ -1,4 +1,4 @@
-import {Element, PluginCommAPI, PointUtils} from 'sn-plugin-lib';
+import {Element, PluginCommAPI} from 'sn-plugin-lib';
 import {
   DashStyle,
   P,
@@ -6,7 +6,6 @@ import {
   dashFlags,
   dashPattern,
   dashPolyline,
-  ellipsePoints,
   fillPolylines,
   chainRows,
   hatchSegments,
@@ -26,6 +25,16 @@ import {
   settleLasso,
 } from './selection';
 import {getSettings} from './settings';
+import {
+  Outline,
+  Size,
+  Style,
+  contourOf,
+  describeElement,
+  outlineOf,
+  pageSize,
+  styleOf,
+} from './outline';
 
 /**
  * Line patterns and fills for the lasso selection. Supernote has no dashed or
@@ -59,65 +68,9 @@ export const FILLS: FillStyle[] = [
 type OnReady = () => void;
 
 type Result = {ok: boolean; message: string};
-type Style = {penType: number; penColor: number; penWidth: number};
 
 /** About 100 width units per pixel of line (measured: 0.5 pen ≈ 600 ≈ 6 px). */
 const px = (width: number) => width / 100;
-
-type Size = {width: number; height: number};
-
-async function pageSize(): Promise<Size | null> {
-  const s = ok<Size>(await PluginCommAPI.getPageDisplaySize());
-  return s && s.width > 1 && s.height > 1
-    ? {width: Math.round(s.width), height: Math.round(s.height)}
-    : null;
-}
-
-/** An element's outline in page pixels, and the style it is drawn with. */
-async function outlineOf(
-  e: Element,
-  size: Size | null,
-): Promise<{points: P[]; style: Style} | null> {
-  if (isShape(e)) {
-    const g = e.geometry!;
-    const style = {
-      penType: g.penType,
-      penColor: g.penColor,
-      penWidth: g.penWidth || e.thickness,
-    };
-    if (
-      (g.type === 'GEO_circle' || g.type === 'GEO_ellipse') &&
-      g.ellipseCenterPoint
-    ) {
-      // Read back from the page, the "radius" fields hold twice the drawn radius
-      // (measured on a Manta: hatching came out twice too wide), unlike insertGeometry.
-      const pts = ellipsePoints(
-        g.ellipseCenterPoint,
-        g.ellipseMajorAxisRadius / 2,
-        g.ellipseMinorAxisRadius / 2,
-        g.ellipseAngle,
-      );
-      return {points: pts, style};
-    }
-    return g.points?.length >= 2
-      ? {points: g.points.map(p => ({x: p.x, y: p.y})), style}
-      : null;
-  }
-  if (isStroke(e) && e.stroke && size) {
-    const n = await e.stroke.points.size();
-    if (n < 2) {
-      return null;
-    }
-    const emr = await e.stroke.points.getRange(0, n);
-    const style = {
-      penType: e.stroke.penType,
-      penColor: e.stroke.penColor,
-      penWidth: e.thickness,
-    };
-    return {points: emr.map(p => PointUtils.emrPoint2Android(p, size)), style};
-  }
-  return null;
-}
 
 function geometry(points: P[], style: Style) {
   return {
@@ -353,26 +306,34 @@ export async function applyFill(
   const size = await pageSize();
   // Visible pieces of every selected stroke / shape: a partly erased stroke
   // stays one element with hidden points, and only its visible runs count.
-  const pieces: {points: P[]; style: Style}[] = [];
-  let erased = 0;
-  let unread = 0;
+  const pieces: Outline[] = [];
+  let erased = 0; // cut with the eraser: the stored centre line still holds the erased parts
+  let drawn = 0; // read from the drawn contour instead of the centre line
+  const unreadable: string[] = [];
   for (const e of targets) {
     const o = await outlineOf(e, size);
-    if (!o) {
-      unread++;
+    const cut = (await eraserCount(e)) > 0;
+    if (o && !cut) {
+      const runs = visibleRuns(o.points, await drawFlags(e, o.points.length));
+      pieces.push(...runs.map(points => ({points, style: o.style})));
       continue;
     }
-    const runs = visibleRuns(o.points, await drawFlags(e, o.points.length));
-    pieces.push(...runs.map(points => ({points, style: o.style})));
-    // Cut with the eraser: the stored outline still holds the erased parts.
-    if (await eraserCount(e)) {
+    // Erased, or no readable centre line: the drawn contour is the ink as shown.
+    const loops = await contourOf(e, size);
+    if (loops.length) {
+      drawn++;
+      pieces.push(...loops.map(points => ({points, style: styleOf(e)})));
+    } else if (o) {
       erased++;
+      pieces.push({points: o.points, style: o.style});
+    } else {
+      unreadable.push(await describeElement(e));
     }
   }
   release(all);
   const closed = pieces.map(o => closedOutline(o.points));
   const lines: object[] = [];
-  if (pieces.length && !erased && closed.every(Boolean)) {
+  if (pieces.length && !erased && !drawn && closed.every(Boolean)) {
     // Every piece closed on its own: fill each exactly, from its outline.
     pieces.forEach((o, i) =>
       lines.push(...fillPolygon(closed[i]!, o.style, fill, density)),
@@ -389,7 +350,10 @@ export async function applyFill(
       `${targets.length} selected`,
       `${pieces.length} pieces (${closed.filter(Boolean).length} closed)`,
       erased ? `${erased} erased` : '',
-      unread ? `${unread} unreadable` : '',
+      drawn ? `${drawn} from contours` : '',
+      unreadable.length
+        ? `unreadable: ${unreadable.slice(0, 2).join(' | ')}`
+        : '',
     ].filter(Boolean);
     return {
       ok: false,
