@@ -19,7 +19,9 @@ import {
   errorText,
   isShape,
   isStroke,
+  MOVED_MESSAGE,
   lassoElements,
+  lassoMoved,
   ok,
   release,
 } from './selection';
@@ -143,6 +145,9 @@ async function selection(): Promise<{
   targets: Element[];
   error?: string;
 }> {
+  if (await lassoMoved()) {
+    return {all: [], targets: [], error: MOVED_MESSAGE};
+  }
   const {elements, error} = await lassoElements();
   return {
     all: elements,

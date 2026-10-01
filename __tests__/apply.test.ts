@@ -70,3 +70,25 @@ test('the lasso is never let go nor made again', async () => {
   expect(api.setLassoBoxState).not.toHaveBeenCalled();
   expect(api.lassoElements).not.toHaveBeenCalled();
 });
+
+test('moved or resized selection (preview rect ≠ lasso rect): refused, page untouched', async () => {
+  const {PluginManager} = require('sn-plugin-lib');
+  PluginManager.getPluginDirPath = jest.fn(async () => '/plugin');
+  api.getLassoRect = jest.fn(async () => ({success: true, result: {left: 586, top: 701, right: 1098, bottom: 1242}}));
+  api.generateLassoPreview = jest.fn(async () => ({
+    success: true,
+    result: {imagePath: '/plugin/lasso-check.png', rect: {left: 1021, top: 1678, right: 1254, bottom: 1924}, rotateDegree: 0},
+  }));
+  startAction();
+  const res = await applyStyle({width: 300});
+  expect(res.ok).toBe(false);
+  expect(res.message).toMatch(/moved or resized/);
+  expect(api.modifyPageElements).not.toHaveBeenCalled();
+  // Same rects: applied as usual.
+  api.generateLassoPreview.mockImplementation(async () => ({
+    success: true,
+    result: {imagePath: '', rect: {left: 586, top: 701, right: 1098, bottom: 1242}, rotateDegree: 0},
+  }));
+  api.modifyPageElements.mockImplementation(async () => ({success: true, result: [3, 4]}));
+  expect((await applyStyle({width: 300})).ok).toBe(true);
+});

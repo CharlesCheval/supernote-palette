@@ -1,5 +1,5 @@
 import {Element, PluginCommAPI, PluginManager} from 'sn-plugin-lib';
-import {errorText, isShape, isStroke, ok} from './outline';
+import {errorText, isShape, isStroke, ok, withTimeout} from './outline';
 import {trace, traceStart} from './trace';
 import {ABANDONED, actionLive} from './session';
 import {StyleChange, colorName, restyle, restyleGeometry} from './style';
@@ -30,6 +30,8 @@ export type Summary = {
   hidden: string;
   /** Active pen raw width, to check the mm mapping. */
   penWidth: number | null;
+  /** The selection was moved or resized and is still held by the lasso. */
+  moved: boolean;
   error?: string;
 };
 
@@ -86,10 +88,68 @@ export async function lassoElements(): Promise<{
  */
 export const release = (_elements: Element[]) => undefined;
 
+type Rect = {left: number; top: number; right: number; bottom: number};
+
+export const MOVED_MESSAGE =
+  'The selection was moved or resized: tap outside it, select it again, then apply.';
+
+/**
+ * Whether the lasso holds a move or resize not yet applied to the page.
+ *
+ * Measured with the probe (test.21): while a transform is pending, the lasso
+ * rect and the elements read still describe the selection BEFORE it, and
+ * whatever is changed on the page is overwritten by the host's own transformed
+ * copy when the lasso is let go. Only the lasso PREVIEW follows the transform:
+ * its rect is the new one. So the two rects are compared. Read only: the lasso
+ * is never driven (doing so duplicated selections and once crashed a note).
+ */
+export async function lassoMoved(): Promise<boolean> {
+  try {
+    const dir = await PluginManager.getPluginDirPath();
+    if (!dir) {
+      return false;
+    }
+    const [rect, preview] = await Promise.all([
+      withTimeout(PluginCommAPI.getLassoRect() as Promise<any>, 3000, null),
+      withTimeout(
+        PluginCommAPI.generateLassoPreview(
+          `${dir}/lasso-check.png`,
+        ) as Promise<any>,
+        3000,
+        null,
+      ),
+    ]);
+    const a = ok<Rect>(rect);
+    const b = ok<{rect: Rect; rotateDegree: number}>(preview);
+    if (!a || !b?.rect) {
+      return false; // cannot tell: act as before
+    }
+    const moved =
+      Math.abs(a.left - b.rect.left) > 4 ||
+      Math.abs(a.top - b.rect.top) > 4 ||
+      Math.abs(a.right - b.rect.right) > 4 ||
+      Math.abs(a.bottom - b.rect.bottom) > 4 ||
+      Math.abs(b.rotateDegree || 0) > 0.5;
+    trace(
+      `lasso ${Math.round(a.left)},${Math.round(a.top)}–${Math.round(
+        a.right,
+      )},${Math.round(a.bottom)} · preview ${Math.round(
+        b.rect.left,
+      )},${Math.round(b.rect.top)}–${Math.round(b.rect.right)},${Math.round(
+        b.rect.bottom,
+      )}${moved ? ' · MOVED' : ''}`,
+    );
+    return moved;
+  } catch {
+    return false;
+  }
+}
+
 export async function readSummary(): Promise<Summary> {
-  const [{elements, error}, pen] = await Promise.all([
+  const [{elements, error}, pen, moved] = await Promise.all([
     lassoElements(),
     PluginCommAPI.getPenInfo(),
+    lassoMoved(),
   ]);
   const targets = elements.filter(e => isStroke(e) || isShape(e));
   const summary: Summary = {
@@ -101,6 +161,7 @@ export async function readSummary(): Promise<Summary> {
     raw: rawRanges(elements),
     hidden: await hiddenPoints(elements.filter(isStroke).slice(0, 5)),
     penWidth: ok<{width: number}>(pen)?.width ?? null,
+    moved,
     error,
   };
   release(elements);
@@ -219,6 +280,9 @@ export async function applyStyle(
     'width' in change ? `Width ${change.width}` : `Colour ${change.color}`,
   );
   const summary = await readSummary();
+  if (summary.moved) {
+    return {ok: false, message: MOVED_MESSAGE};
+  }
   onReady();
   if (!summary.error && lassoRoute(summary.strokes, summary.shapes)) {
     return applyToLassoShape(change);

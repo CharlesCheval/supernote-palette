@@ -37,6 +37,9 @@ function describe(s: Summary | null): string {
   if (s.error) {
     return s.error;
   }
+  if (s.moved) {
+    return 'Moved or resized: tap outside, select again';
+  }
   const parts = [
     `${s.strokes} stroke${s.strokes === 1 ? '' : 's'}`,
     `${s.shapes} shape${s.shapes === 1 ? '' : 's'}`,
@@ -220,6 +223,7 @@ function App(): React.JSX.Element {
           hidden: '',
           raw: '',
           penWidth: null,
+          moved: false,
           error: String(e?.message ?? e),
         }),
       );
