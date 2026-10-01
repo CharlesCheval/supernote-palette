@@ -9,6 +9,7 @@ import {
   withTimeout,
 } from './outline';
 import {range} from './patterns';
+import {trace, traceStart} from './trace';
 import {StyleChange, colorName, restyle, restyleGeometry} from './style';
 
 export {errorText, isShape, isStroke, ok};
@@ -110,6 +111,7 @@ export async function settleLasso(): Promise<(e: Element) => boolean> {
       error: 'timeout',
     });
     if (before.error || !before.elements.length) {
+      trace(`lasso: ${before.error ?? 'empty'}`);
       return keepAll;
     }
     const nums = new Set(before.elements.map(e => e.numInPage));
@@ -130,6 +132,21 @@ export async function settleLasso(): Promise<(e: Element) => boolean> {
       }
     }
     release(before.elements);
+    const xs = range(pts.map(p => p.x));
+    const ys = range(pts.map(p => p.y));
+    const fmt = (r: Rect | null) =>
+      r
+        ? `${Math.round(r.left)},${Math.round(r.top)}–${Math.round(
+            r.right,
+          )},${Math.round(r.bottom)}`
+        : 'none';
+    trace(
+      `lasso: ${count} el. #${[...nums].join(',')} · box ${fmt(box)} · ink ${
+        pts.length
+          ? fmt({left: xs.min, top: ys.min, right: xs.max, bottom: ys.max})
+          : 'none'
+      } · page ${size ? `${size.width}×${size.height}` : '?'}`,
+    );
     // Only a box in page pixels can be compared (and lassoed again).
     if (
       !box ||
@@ -140,8 +157,6 @@ export async function settleLasso(): Promise<(e: Element) => boolean> {
     ) {
       return keepAll;
     }
-    const xs = range(pts.map(p => p.x));
-    const ys = range(pts.map(p => p.y));
     if (
       !pendingTransform(box, {
         left: xs.min,
@@ -150,8 +165,10 @@ export async function settleLasso(): Promise<(e: Element) => boolean> {
         bottom: ys.max,
       })
     ) {
+      trace('no pending move/resize: lasso left alone');
       return keepAll;
     }
+    trace('pending move/resize: committing (lasso let go, made again)');
     if (
       !ok<boolean>(
         await withTimeout(
@@ -180,6 +197,7 @@ export async function settleLasso(): Promise<(e: Element) => boolean> {
     });
     const known = after.elements.filter(e => nums.has(e.numInPage)).length;
     const total = after.elements.length;
+    trace(`re-lasso: ${after.error ?? `${total} el., ${known} same numbers`}`);
     release(after.elements);
     if (known > 0) {
       return e => nums.has(e.numInPage);
@@ -189,13 +207,20 @@ export async function settleLasso(): Promise<(e: Element) => boolean> {
     return total > 0 && total <= count + 2
       ? keepAll
       : e => nums.has(e.numInPage);
-  } catch {
+  } catch (e: any) {
+    trace(`lasso check failed: ${e?.message ?? e}`);
     return keepAll;
   }
 }
 
-export const release = (elements: Element[]) =>
-  elements.forEach(e => e?.uuid && PluginCommAPI.recycleElement(e.uuid));
+/**
+ * Elements read from the lasso are NOT recycled. Recycling frees the native
+ * copy by uuid, and the host hands out the same uuid for an element it still
+ * uses: after a change, the next selection of that element was dropped as soon
+ * as the panel read and recycled it. The copies are small and freed with the
+ * plugin.
+ */
+export const release = (_elements: Element[]) => undefined;
 
 export async function readSummary(): Promise<Summary> {
   const [{elements, error}, pen] = await Promise.all([
@@ -323,6 +348,9 @@ export async function applyStyle(
   change: StyleChange,
   onReady: () => void = () => {},
 ): Promise<{ok: boolean; message: string}> {
+  traceStart(
+    'width' in change ? `Width ${change.width}` : `Colour ${change.color}`,
+  );
   const keep = await settleLasso();
   const summary = await readSummary();
   onReady();
@@ -364,6 +392,13 @@ export async function applyStyle(
     // No explicit layer: the host uses the current layer.
     const res: any = await PluginCommAPI.modifyPageElements(targets, page);
     const changed = ok<number[]>(res);
+    trace(
+      `try ${attempt + 1}: ${targets.length} el. → ${
+        changed
+          ? `${Array.isArray(changed) ? changed.length : '?'} modified`
+          : errorText(res)
+      }`,
+    );
     if (!changed) {
       release(targets);
       last = `Could not change the selection: ${errorText(res)}`;
@@ -374,7 +409,9 @@ export async function applyStyle(
       continue;
     }
     // Modified elements stay referenced by the host: they are not recycled here.
-    if (await applied(change, keep)) {
+    const stuck = await applied(change, keep);
+    trace(`read back: ${stuck ? 'changed' : 'unchanged'}`);
+    if (stuck) {
       return {ok: true, message: `${targets.length} elements updated.`};
     }
     // Read back unchanged: apply again; if it still reads back unchanged after

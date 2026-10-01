@@ -22,6 +22,7 @@ import {FILLS, FillStyle, HATCHES, applyDashes, applyFill} from './src/effects';
 import {DASH_STYLES, DashStyle} from './src/patterns';
 import {LIMITS, getSettings, subscribe, updateSettings} from './src/settings';
 import {PEN_COLORS, StyleChange} from './src/style';
+import {getTrace, subscribeTrace} from './src/trace';
 import {PRESETS_MM, formatMm, toInternal} from './src/widths';
 
 export const REFRESH_EVENT = 'strokewidth:refresh';
@@ -167,6 +168,9 @@ function App(): React.JSX.Element {
   // Saved settings (hatch density): re-render when they load or change.
   const [, settingsChanged] = useState(0);
   useEffect(() => subscribe(() => settingsChanged(n => n + 1)), []);
+  // Test builds: what the last action did, step by step.
+  const [, traceChanged] = useState(0);
+  useEffect(() => subscribeTrace(() => traceChanged(n => n + 1)), []);
   const density = getSettings().hatchDensity;
   const changeDensity = (delta: number) =>
     updateSettings({hatchDensity: density + delta});
@@ -353,6 +357,11 @@ function App(): React.JSX.Element {
           {describe(summary)}
           {summary?.hidden ? ` · hidden ${summary.hidden}` : ''}
         </Text>
+        {getTrace().map((line, i) => (
+          <Text key={i} style={styles.trace} numberOfLines={1}>
+            {line}
+          </Text>
+        ))}
       </ScrollView>
 
       {toast ? (
@@ -459,6 +468,7 @@ const styles = StyleSheet.create({
   },
   dim: {opacity: 0.4},
   info: {fontSize: 14, color: '#555555', marginTop: 2},
+  trace: {fontSize: 11, color: '#777777'},
   toastLayer: {
     ...StyleSheet.absoluteFillObject,
     alignItems: 'center',
