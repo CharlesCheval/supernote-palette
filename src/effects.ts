@@ -19,9 +19,9 @@ import {
   errorText,
   isShape,
   isStroke,
+  lassoElements,
   ok,
   release,
-  settleLasso,
 } from './selection';
 import {getSettings} from './settings';
 import {ABANDONED, actionLive} from './session';
@@ -143,12 +143,10 @@ async function selection(): Promise<{
   targets: Element[];
   error?: string;
 }> {
-  // Commit a pending lasso move / resize first, so the elements are current.
-  const {keep, read} = await settleLasso();
-  const {elements, error} = await read();
+  const {elements, error} = await lassoElements();
   return {
     all: elements,
-    targets: elements.filter(e => (isStroke(e) || isShape(e)) && keep(e)),
+    targets: elements.filter(e => isStroke(e) || isShape(e)),
     error,
   };
 }

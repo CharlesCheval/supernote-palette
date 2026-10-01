@@ -1,19 +1,5 @@
-import {
-  Element,
-  PluginCommAPI,
-  PluginFileAPI,
-  PluginManager,
-} from 'sn-plugin-lib';
-import {
-  errorText,
-  isShape,
-  isStroke,
-  ok,
-  outlineOf,
-  pageSize,
-  withTimeout,
-} from './outline';
-import {range} from './patterns';
+import {Element, PluginCommAPI, PluginManager} from 'sn-plugin-lib';
+import {errorText, isShape, isStroke, ok} from './outline';
 import {trace, traceStart} from './trace';
 import {ABANDONED, actionLive} from './session';
 import {StyleChange, colorName, restyle, restyleGeometry} from './style';
@@ -81,369 +67,15 @@ export async function lassoElements(): Promise<{
     : {elements: [], error: `No lasso selection (${errorText(res)})`};
 }
 
-type Rect = {left: number; top: number; right: number; bottom: number};
-
 /**
- * Whether a move or resize is still pending in the lasso. A lasso drawn by hand
- * always encloses the ink it selects, however loosely; while a shrink or a move
- * is pending, the box is at the new place and size but the elements read are
- * the old ones, so their ink sticks out of the box. That is the only signal
- * used: a loose lasso (box much bigger than the ink) is normal, and an enlarge
- * still pending cannot be told apart from it, so it is left alone.
+ * The lasso is never let go, made again or otherwise driven by Inkwell: doing
+ * so (test builds 16 to 19) duplicated multi-stroke selections and once made
+ * the note crash and lose its recent history. A limit remains, from the host:
+ * right after a lasso move or resize, the host keeps its own transformed copy
+ * of the selection and writes it back when the lasso is let go, and nothing
+ * read through the SDK shows that a transform is pending. A change made then is
+ * lost; tapping elsewhere and selecting again first avoids it.
  */
-export function pendingTransform(box: Rect, ink: Rect, margin = 24): boolean {
-  return (
-    ink.left < box.left - margin ||
-    ink.top < box.top - margin ||
-    ink.right > box.right + margin ||
-    ink.bottom > box.bottom + margin
-  );
-}
-
-const LASSO_CALL_MS = 3000;
-
-const fmt = (r: Rect | null) =>
-  r
-    ? `${Math.round(r.left)},${Math.round(r.top)}–${Math.round(
-        r.right,
-      )},${Math.round(r.bottom)}`
-    : 'none';
-
-/** Bounding box of the elements' ink, or null when none can be read. */
-async function inkBox(
-  elements: Element[],
-  size: Awaited<ReturnType<typeof pageSize>>,
-): Promise<Rect | null> {
-  const pts = [];
-  for (const e of elements) {
-    const o = await outlineOf(e, size);
-    if (o) {
-      pts.push(...o.points);
-    }
-  }
-  if (!pts.length) {
-    return null;
-  }
-  const xs = range(pts.map(p => p.x));
-  const ys = range(pts.map(p => p.y));
-  return {left: xs.min, top: ys.min, right: xs.max, bottom: ys.max};
-}
-
-/** Elements of the current page, by number, read fresh from the note. */
-export async function pageElements(
-  nums: number[],
-): Promise<{elements: Element[]; error?: string}> {
-  const path = ok<string>(await PluginCommAPI.getCurrentFilePath());
-  const page = ok<number>(await PluginCommAPI.getCurrentPageNum());
-  if (!path || page == null) {
-    trace(`page read: no ${path ? 'page' : 'file path'}`);
-    return {elements: [], error: 'Could not read the page.'};
-  }
-  PluginCommAPI.clearElementCache();
-  if (nums.length > 30) {
-    // Many elements: one read of the whole page beats one call each.
-    const wanted = new Set(nums);
-    const all =
-      ok<Element[]>(
-        await withTimeout(
-          PluginFileAPI.getElements(page, path) as Promise<any>,
-          4 * LASSO_CALL_MS,
-          null,
-        ),
-      ) ?? [];
-    const elements = all.filter(e => wanted.has(e.numInPage));
-    return elements.length
-      ? {elements}
-      : {
-          elements: [],
-          error: 'The selected elements were not found on the page.',
-        };
-  }
-  const elements: Element[] = [];
-  let why = '';
-  for (const n of nums) {
-    const res: any = await withTimeout(
-      PluginFileAPI.getElement(path, page, n) as Promise<any>,
-      LASSO_CALL_MS,
-      null,
-    );
-    const e = ok<Element>(res);
-    if (e) {
-      elements.push(e);
-    } else {
-      why = errorText(res);
-    }
-  }
-  trace(
-    `page read p${page}: ${elements.length}/${nums.length}${
-      why ? ` · ${why}` : ''
-    } · uuids ${elements
-      .slice(0, 3)
-      .map(e => String(e.uuid).slice(0, 6))
-      .join(',')}`,
-  );
-  return elements.length
-    ? {elements}
-    : {
-        elements: [],
-        error: 'The selected elements were not found on the page.',
-      };
-}
-
-/** Every element number of the current page. */
-async function pageNumbers(): Promise<number[]> {
-  const path = ok<string>(await PluginCommAPI.getCurrentFilePath());
-  const page = ok<number>(await PluginCommAPI.getCurrentPageNum());
-  if (!path || page == null) {
-    return [];
-  }
-  return (
-    ok<number[]>(
-      await withTimeout(
-        PluginFileAPI.getElementNumList(path, page) as Promise<any>,
-        LASSO_CALL_MS,
-        null,
-      ),
-    ) ?? []
-  );
-}
-
-/** Where the action finds its elements once the lasso is settled. */
-export type Settled = {
-  /** Keeps only the elements selected by the user (a re-lasso may catch neighbours). */
-  keep: (e: Element) => boolean;
-  /** Whether the lasso holds the selection: if not, `read` reads the page. */
-  lassoed: boolean;
-  read: () => Promise<{elements: Element[]; error?: string}>;
-};
-
-/**
- * After a lasso move or resize, while the shape is still selected, the host
- * keeps the transform pending in the lasso with its own copy of the elements,
- * and writes that copy back when the lasso is let go: a change made to the page
- * meanwhile was silently lost. Worse, everything read through the SDK (the
- * elements AND the lasso box) still describes the shape BEFORE the transform,
- * so a pending transform cannot be detected, nor its new place known.
- *
- * So before every action the lasso is let go (committing any transform, as
- * tapping elsewhere does), the selected elements are found again on the page
- * (by number, checked by uuid or by type and point count, else among the
- * newest elements), and the lasso is made again around their ink as it now is.
- * If that last step fails, the action works on the page elements directly.
- */
-export async function settleLasso(): Promise<Settled> {
-  const keepAll: Settled = {
-    keep: () => true,
-    lassoed: true,
-    read: lassoElements,
-  };
-  try {
-    const before = await withTimeout(lassoElements(), LASSO_CALL_MS, {
-      elements: [],
-      error: 'timeout',
-    });
-    if (before.error || !before.elements.length) {
-      trace(`lasso: ${before.error ?? 'empty'}`);
-      return keepAll;
-    }
-    const size = await pageSize();
-    const box = ok<Rect>(
-      await withTimeout(
-        PluginCommAPI.getLassoRect() as Promise<any>,
-        LASSO_CALL_MS,
-        null,
-      ),
-    );
-    // What identifies each selected element once the lasso is let go.
-    const uuids = new Set(before.elements.map(e => e.uuid));
-    const prints = new Map<string, number>();
-    for (const e of before.elements) {
-      const o = await outlineOf(e, size);
-      const key = `${e.type}:${o?.points.length ?? 0}`;
-      prints.set(key, (prints.get(key) ?? 0) + 1);
-    }
-    const nums = before.elements.map(e => e.numInPage);
-    const count = nums.length;
-    trace(
-      `lasso: ${count} el. #${nums.join(',')} · box ${fmt(box)} · ink ${fmt(
-        await inkBox(before.elements, size),
-      )}`,
-    );
-    if (!actionLive()) {
-      return keepAll;
-    }
-    if (
-      !ok<boolean>(
-        await withTimeout(
-          PluginCommAPI.setLassoBoxState(2) as Promise<any>,
-          LASSO_CALL_MS,
-          null,
-        ),
-      )
-    ) {
-      trace('lasso could not be let go: left as is');
-      return keepAll;
-    }
-
-    // Committing a move or resize RECREATES the elements: new number, new
-    // uuid (measured). So they are recognised by uuid (nothing was pending),
-    // else by what the transform keeps: a stroke's type and point count, or a
-    // shape's geometry type with a number newer than the old ones.
-    const newestBefore = Math.max(...nums);
-    const geoTypes = new Map<string, number>();
-    for (const e of before.elements) {
-      if (isShape(e)) {
-        const t = e.geometry!.type;
-        geoTypes.set(t, (geoTypes.get(t) ?? 0) + 1);
-      }
-    }
-    const identify = async (elements: Element[]) => {
-      // Not by number: once elements are recreated, the old numbers belong to
-      // other elements.
-      const found = elements.filter(e => uuids.has(e.uuid));
-      if (found.length) {
-        return found; // nothing was recreated
-      }
-      const strokesLeft = new Map(prints);
-      const shapesLeft = new Map(geoTypes);
-      for (const e of elements) {
-        if (found.length >= count) {
-          break;
-        }
-        if (isStroke(e)) {
-          const o = await outlineOf(e, size);
-          const n = o?.points.length ?? 0;
-          const key = `${e.type}:${n}`;
-          if (n >= 10 && (strokesLeft.get(key) ?? 0) > 0) {
-            strokesLeft.set(key, strokesLeft.get(key)! - 1);
-            found.push(e);
-          }
-        } else if (isShape(e) && e.numInPage > newestBefore) {
-          const t = e.geometry!.type;
-          if ((shapesLeft.get(t) ?? 0) > 0) {
-            shapesLeft.set(t, shapesLeft.get(t)! - 1);
-            found.push(e);
-          }
-        }
-      }
-      return found;
-    };
-    const lassoOn = async (r: Rect) => {
-      await withTimeout(
-        PluginCommAPI.lassoElements({
-          left: Math.max(0, Math.floor(r.left)),
-          top: Math.max(0, Math.floor(r.top)),
-          right: Math.ceil(r.right),
-          bottom: Math.ceil(r.bottom),
-        }) as Promise<any>,
-        LASSO_CALL_MS,
-        null,
-      );
-      const again = await withTimeout(lassoElements(), LASSO_CALL_MS, {
-        elements: [],
-        error: 'timeout',
-      });
-      const found = await identify(again.elements);
-      trace(
-        `re-lasso ${fmt(r)}: ${
-          again.error ??
-          `${again.elements.length} el., ${found.length} recognised #${found
-            .map(e => e.numInPage)
-            .join(',')}`
-        }`,
-      );
-      return found;
-    };
-
-    // The lasso made again on its old box: holds the elements when nothing
-    // moved, and often the recreated ones after a shrink.
-    if (box && (!size || box.right <= 1.3 * size.width)) {
-      const found = await lassoOn(box);
-      if (found.length) {
-        const keepNums = new Set(found.map(e => e.numInPage));
-        return {
-          keep: e => keepNums.has(e.numInPage),
-          lassoed: true,
-          read: lassoElements,
-        };
-      }
-    }
-
-    // Moved away: find the recreated elements on the page.
-    const matches = async (candidates: number[]) =>
-      identify((await pageElements(candidates)).elements);
-    let found: Element[] = [];
-    let where = 'last element';
-    if (count === 1) {
-      // One element: the recreated one is the page's last element.
-      PluginCommAPI.clearElementCache();
-      const res: any = await withTimeout(
-        PluginFileAPI.getLastElement() as Promise<any>,
-        LASSO_CALL_MS,
-        null,
-      );
-      const last = ok<Element>(res);
-      trace(
-        `last element: ${
-          last ? `#${last.numInPage} type ${last.type}` : errorText(res)
-        }`,
-      );
-      found = last ? await identify([last]) : [];
-    }
-    if (!found.length) {
-      await ensureReadAccess();
-      const all = await pageNumbers();
-      found = await matches(all.slice(-(2 * count + 4)));
-      where = 'newest';
-    }
-    const foundNums = new Set(found.map(e => e.numInPage));
-    const ink = await inkBox(found, size);
-    trace(
-      `found ${found.length}/${count} (${where}) #${[...foundNums].join(
-        ',',
-      )} · ink ${fmt(ink)}`,
-    );
-    if (!found.length || !ink) {
-      return {
-        keep: () => false,
-        lassoed: false,
-        read: async () => ({
-          elements: [],
-          error: 'The selection was lost after the move: select it again.',
-        }),
-      };
-    }
-    const keep = (e: Element) => foundNums.has(e.numInPage);
-    const fromPage: Settled = {
-      keep,
-      lassoed: false,
-      read: () => pageElements([...foundNums]),
-    };
-    if (!actionLive()) {
-      return fromPage;
-    }
-    // Lasso made again around the ink as it now is.
-    const pad = 6;
-    const again = await lassoOn({
-      left: ink.left - pad,
-      top: ink.top - pad,
-      right: ink.right + pad,
-      bottom: ink.bottom + pad,
-    });
-    if (again.length) {
-      const keepNums = new Set(again.map(e => e.numInPage));
-      return {
-        keep: e => keepNums.has(e.numInPage),
-        lassoed: true,
-        read: lassoElements,
-      };
-    }
-    return fromPage;
-  } catch (e: any) {
-    trace(`lasso check failed: ${e?.message ?? e}`);
-    return keepAll;
-  }
-}
 
 /**
  * Elements read from the lasso are NOT recycled. Recycling frees the native
@@ -533,33 +165,6 @@ function rawRanges(elements: Element[]): string {
     .join(' · ');
 }
 
-let readGranted = false;
-
-/** Reading the page by element number needs the file read permission (measured). */
-export async function ensureReadAccess(): Promise<boolean> {
-  if (readGranted) {
-    return true;
-  }
-  const permission = 'plugin.permission.FILE:READ';
-  try {
-    if ((await PluginManager.hasPermission(permission)) < 1) {
-      const choice = await PluginManager.requestPermission(
-        permission,
-        'Finding a moved selection again reads the page.',
-      );
-      if (choice !== 1 && choice !== 2) {
-        trace('file read permission refused');
-        return false;
-      }
-    }
-  } catch (e: any) {
-    trace(`file read permission: ${e?.message ?? e}`);
-    return false;
-  }
-  readGranted = true;
-  return true;
-}
-
 let writeGranted = false;
 
 export async function ensureWriteAccess(): Promise<boolean> {
@@ -613,16 +218,11 @@ export async function applyStyle(
   traceStart(
     'width' in change ? `Width ${change.width}` : `Colour ${change.color}`,
   );
-  const settled = await settleLasso();
-  const {keep} = settled;
-  if (settled.lassoed) {
-    const summary = await readSummary();
-    if (!summary.error && lassoRoute(summary.strokes, summary.shapes)) {
-      onReady();
-      return applyToLassoShape(change);
-    }
-  }
+  const summary = await readSummary();
   onReady();
+  if (!summary.error && lassoRoute(summary.strokes, summary.shapes)) {
+    return applyToLassoShape(change);
+  }
   if (!(await ensureWriteAccess())) {
     return {
       ok: false,
@@ -632,11 +232,11 @@ export async function applyStyle(
   }
   // One attempt only. Retrying (with a pause) could run after the panel had
   // closed and resume when it was opened again, dropping the new selection.
-  const {elements, error} = await settled.read();
+  const {elements, error} = await lassoElements();
   if (error) {
     return {ok: false, message: error};
   }
-  const targets = elements.filter(e => (isStroke(e) || isShape(e)) && keep(e));
+  const targets = elements.filter(e => isStroke(e) || isShape(e));
   if (!targets.length) {
     return {ok: false, message: 'The selection has no strokes or shapes.'};
   }
@@ -672,24 +272,17 @@ export async function applyStyle(
     };
   }
   // Diagnostics only: what the selection reads like now.
-  if (settled.lassoed) {
-    trace(
-      `read back: ${(await applied(change, keep)) ? 'changed' : 'unchanged'}`,
-    );
-  }
+  trace(`read back: ${(await applied(change)) ? 'changed' : 'unchanged'}`);
   return {ok: true, message: `${targets.length} elements updated.`};
 }
 
 /** Whether the selection, read again, shows the change. */
-async function applied(
-  change: StyleChange,
-  keep: (e: Element) => boolean,
-): Promise<boolean> {
+async function applied(change: StyleChange): Promise<boolean> {
   const {elements, error} = await lassoElements();
   if (error) {
     return true; // cannot check (selection dropped): trust the host's answer
   }
-  const targets = elements.filter(e => (isStroke(e) || isShape(e)) && keep(e));
+  const targets = elements.filter(e => isStroke(e) || isShape(e));
   const ok_ = targets.every(e =>
     'width' in change
       ? (isShape(e) ? e.geometry!.penWidth || e.thickness : e.thickness) ===
