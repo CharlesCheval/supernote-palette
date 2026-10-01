@@ -19,7 +19,6 @@ import {
   errorText,
   isShape,
   isStroke,
-  lassoElements,
   ok,
   release,
   settleLasso,
@@ -145,8 +144,8 @@ async function selection(): Promise<{
   error?: string;
 }> {
   // Commit a pending lasso move / resize first, so the elements are current.
-  const keep = await settleLasso();
-  const {elements, error} = await lassoElements();
+  const {keep, read} = await settleLasso();
+  const {elements, error} = await read();
   return {
     all: elements,
     targets: elements.filter(e => (isStroke(e) || isShape(e)) && keep(e)),
