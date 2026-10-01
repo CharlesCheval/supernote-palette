@@ -19,9 +19,10 @@ import {
   errorText,
   isShape,
   isStroke,
-  MOVED_MESSAGE,
   lassoElements,
-  lassoMoved,
+  forPageWrite,
+  prepareSelection,
+  releaseLasso,
   ok,
   release,
 } from './selection';
@@ -145,15 +146,32 @@ async function selection(): Promise<{
   targets: Element[];
   error?: string;
 }> {
-  if (await lassoMoved()) {
-    return {all: [], targets: [], error: MOVED_MESSAGE};
+  // A pending move is applied first; neighbours caught by the reselection are
+  // left alone, and the lasso let go once the action is done.
+  const prep = await prepareSelection();
+  if (prep.error) {
+    return {all: [], targets: [], error: prep.error};
   }
+  releaseAfter = prep.extras;
   const {elements, error} = await lassoElements();
   return {
     all: elements,
-    targets: elements.filter(e => isStroke(e) || isShape(e)),
+    targets: elements.filter(e => (isStroke(e) || isShape(e)) && prep.keep(e)),
     error,
   };
+}
+
+let releaseAfter = false;
+
+async function thenRelease<T>(work: Promise<T>): Promise<T> {
+  try {
+    return await work;
+  } finally {
+    if (releaseAfter) {
+      releaseAfter = false;
+      await releaseLasso();
+    }
+  }
 }
 
 /**
@@ -230,6 +248,7 @@ async function dashShapes(
   const done = await insertAll(pieces);
   if (done < pieces.length) {
     // Put the shapes back rather than leave them half dashed.
+    shapes.forEach(forPageWrite);
     await PluginCommAPI.insertPageElements(shapes, page);
     return {
       done: 0,
@@ -240,7 +259,12 @@ async function dashShapes(
 }
 
 /** Makes every selected stroke and shape dashed. */
-export async function applyDashes(
+export const applyDashes = (
+  dash: DashStyle,
+  onReady: OnReady = () => {},
+): Promise<Result> => thenRelease(dashes(dash, onReady));
+
+async function dashes(
   dash: DashStyle,
   onReady: OnReady = () => {},
 ): Promise<Result> {
@@ -301,7 +325,13 @@ function fillPlan(fill: FillStyle, outlineWidth: number, density: number) {
 }
 
 /** Hatches or fills the inside of every selected closed stroke or shape. */
-export async function applyFill(
+export const applyFill = (
+  fill: FillStyle,
+  onReady: OnReady = () => {},
+  density = getSettings().hatchDensity,
+): Promise<Result> => thenRelease(fills(fill, onReady, density));
+
+async function fills(
   fill: FillStyle,
   onReady: OnReady = () => {},
   density = getSettings().hatchDensity,

@@ -103,9 +103,6 @@ export const release = (_elements: Element[]) => undefined;
 
 type Rect = {left: number; top: number; right: number; bottom: number};
 
-export const MOVED_MESSAGE =
-  'The selection was moved or resized: use "Apply move & reselect", or tap outside and select it again.';
-
 type Rects = {lasso: Rect; preview: Rect; rotate: number};
 
 /** The lasso rect and the lasso preview's rect, or null when either cannot be read. */
@@ -170,55 +167,129 @@ export async function lassoMoved(): Promise<boolean> {
   return moved;
 }
 
-/** Strokes and each geometry type, counted: what a move must keep. */
-function makeup(elements: Element[]): string {
-  const counts = new Map<string, number>();
-  for (const e of elements) {
-    const k = isShape(e) ? `geo ${e.geometry!.type}` : `type ${e.type}`;
-    counts.set(k, (counts.get(k) ?? 0) + 1);
+/** What identifies an element through a move: kind, point count, ink box. */
+type Print = {kind: string; n: number; box: Rect};
+
+async function printOf(
+  e: Element,
+  size: Awaited<ReturnType<typeof pageSize>>,
+): Promise<Print | null> {
+  const o = await outlineOf(e, size);
+  if (!o || !o.points.length) {
+    return null;
   }
-  return [...counts.entries()]
-    .sort()
-    .map(([k, n]) => `${n} ${k}`)
-    .join(', ');
+  let box = {
+    left: Infinity,
+    top: Infinity,
+    right: -Infinity,
+    bottom: -Infinity,
+  };
+  for (const p of o.points) {
+    box = {
+      left: Math.min(box.left, p.x),
+      top: Math.min(box.top, p.y),
+      right: Math.max(box.right, p.x),
+      bottom: Math.max(box.bottom, p.y),
+    };
+  }
+  const kind = isShape(e) ? `geo ${e.geometry!.type}` : `type ${e.type}`;
+  return {kind, n: o.points.length, box};
 }
 
+/** Lets the lasso go and checks it is gone. */
+export async function releaseLasso(): Promise<boolean> {
+  await withTimeout(
+    PluginCommAPI.setLassoBoxState(2) as Promise<any>,
+    5000,
+    null,
+  );
+  const still: any = await withTimeout(
+    PluginCommAPI.getLassoElements() as Promise<any>,
+    5000,
+    null,
+  );
+  const gone = !ok<Element[]>(still);
+  trace(`lasso let go: ${gone ? 'ok' : 'STILL SELECTED'}`);
+  return gone;
+}
+
+/** How the action finds its elements, once any pending move is applied. */
+export type Prepared = {
+  /** Keeps only the user's elements (the lasso may also hold neighbours). */
+  keep: (e: Element) => boolean;
+  /** Neighbours were caught: the lasso is let go once the action is done. */
+  extras: boolean;
+  error?: string;
+};
+
+const keepAll: Prepared = {keep: () => true, extras: false};
+
 /**
- * On request only (a button shown when a move is pending): applies the pending
- * move or resize and selects the same elements again, as the user would by
- * tapping outside and lassoing them. Unlike test builds 16-19, which lassoed
- * the OLD box and changed elements found on the page outside any lasso, this:
- * 1. saves the note first, so a problem cannot cost more than the last action;
- * 2. lets the lasso go (the host applies the transform), then lassoes the
- *    preview rect, which is where the selection now is;
- * 3. checks the new selection: same number and kinds of elements, ink inside
- *    that rect. Otherwise the lasso is let go and nothing else is done.
- * It never changes an element: the style is applied afterwards, by the usual
- * route, on a normal selection.
+ * Before an action: if the lasso holds a pending move or resize (lasso rect ≠
+ * preview rect), applies it and finds the same elements again.
+ *
+ * Measured on a Manta: saving the note applies the move and lets the lasso go;
+ * the elements are recreated (new numbers, new uuids) and keep their kind and
+ * point count. So: save; lasso the preview rect (where they now are); among
+ * what it catches (neighbours too, when the shape was put over other writing),
+ * recognise each element by kind, point count and its ink box mapped through
+ * the move (old lasso rect → preview rect). The action then changes only
+ * those. If any element is not recognised for sure, nothing is changed and the
+ * lasso is let go.
  */
-export async function commitMove(): Promise<{ok: boolean; message: string}> {
-  traceStart('Apply move & reselect');
+export async function prepareSelection(): Promise<Prepared> {
   const r = await lassoRects();
   if (!r || !differs(r)) {
-    return {ok: true, message: 'No pending move: nothing to do.'};
+    return keepAll;
   }
+  if (Math.abs(r.rotate) > 0.5) {
+    return {
+      ...keepAll,
+      error:
+        'The selection was rotated: tap outside, select it again, then apply.',
+    };
+  }
+  const size = await pageSize();
   const before = await lassoElements();
   if (before.error || !before.elements.length) {
-    return {ok: false, message: before.error ?? 'Empty selection.'};
+    return {...keepAll, error: before.error ?? 'Empty selection.'};
   }
-  const expected = makeup(before.elements);
-  trace(`before: ${expected} · preview ${fmtRect(r.preview)}`);
+  const sx =
+    (r.preview.right - r.preview.left) /
+    Math.max(1, r.lasso.right - r.lasso.left);
+  const sy =
+    (r.preview.bottom - r.preview.top) /
+    Math.max(1, r.lasso.bottom - r.lasso.top);
+  const map = (b: Rect): Rect => ({
+    left: r.preview.left + (b.left - r.lasso.left) * sx,
+    top: r.preview.top + (b.top - r.lasso.top) * sy,
+    right: r.preview.left + (b.right - r.lasso.left) * sx,
+    bottom: r.preview.top + (b.bottom - r.lasso.top) * sy,
+  });
+  const wanted: Print[] = [];
+  for (const e of before.elements) {
+    const p = await printOf(e, size);
+    if (!p) {
+      return {
+        ...keepAll,
+        error:
+          'A selected element could not be read: tap outside, select it again, then apply.',
+      };
+    }
+    wanted.push({...p, box: map(p.box)});
+  }
+  trace(`moved: ${wanted.length} el. → preview ${fmtRect(r.preview)}`);
   if (!actionLive()) {
-    return ABANDONED;
+    return {...keepAll, error: ABANDONED.message};
   }
   if (!(await ensureWriteAccess())) {
     return {
-      ok: false,
-      message: 'File access denied: the note cannot be saved first.',
+      ...keepAll,
+      error: 'File access denied: the note cannot be saved first.',
     };
   }
-  const step = <T>(work: Promise<T>) =>
-    withTimeout(work as Promise<any>, 5000, {
+  const step = (work: Promise<any>) =>
+    withTimeout(work, 5000, {
       success: false,
       error: {message: 'timeout', code: '-'},
     });
@@ -232,27 +303,19 @@ export async function commitMove(): Promise<{ok: boolean; message: string}> {
   );
   if (!saved?.success || saved.result === false) {
     return {
-      ok: false,
-      message: `Not done: the note could not be saved first (${errorText(
+      ...keepAll,
+      error: `Not done: the note could not be saved first (${errorText(
         saved,
       )}).`,
     };
   }
-  // Measured (test.23): saving applies the pending move and lets the lasso go
-  // by itself. The lasso is let go here only if it is still there.
-  const still: any = await step(
-    PluginCommAPI.getLassoElements() as Promise<any>,
-  );
-  if (ok<Element[]>(still)) {
-    const letGo: any = await step(
-      PluginCommAPI.setLassoBoxState(2) as Promise<any>,
-    );
-    trace(`let go: ${ok<boolean>(letGo) ? 'ok' : errorText(letGo)}`);
-    if (!ok<boolean>(letGo)) {
-      return {ok: false, message: `Not done: ${errorText(letGo)}`};
+  // Saving lets the lasso go (measured); otherwise it is let go here.
+  if (
+    ok<Element[]>(await step(PluginCommAPI.getLassoElements() as Promise<any>))
+  ) {
+    if (!(await releaseLasso())) {
+      return {...keepAll, error: 'Not done: the lasso could not be let go.'};
     }
-  } else {
-    trace('lasso already let go by the save');
   }
   const target = {
     left: Math.floor(r.preview.left),
@@ -263,45 +326,76 @@ export async function commitMove(): Promise<{ok: boolean; message: string}> {
   const lassoed: any = await step(
     PluginCommAPI.lassoElements(target) as Promise<any>,
   );
+  const after = await lassoElements();
   trace(
     `lasso ${fmtRect(target)}: ${
       ok<boolean>(lassoed) ? 'ok' : errorText(lassoed)
+    } · ${after.error ?? `${after.elements.length} el.`}`,
+  );
+  const fail = async (why: string): Promise<Prepared> => {
+    trace(why);
+    if (!after.error) {
+      await releaseLasso();
+    }
+    return {
+      ...keepAll,
+      error:
+        'The move was applied, but the moved elements could not be told apart for sure: select them yourself, then apply.',
+    };
+  };
+  if (after.error || !after.elements.length) {
+    return fail('nothing selected');
+  }
+  // Recognise each wanted element among those caught.
+  const prints = [];
+  for (const e of after.elements) {
+    prints.push({e, p: await printOf(e, size)});
+  }
+  const used = new Set<Element>();
+  for (const w of wanted) {
+    const tol = Math.max(
+      12,
+      0.08 * Math.max(w.box.right - w.box.left, w.box.bottom - w.box.top),
+    );
+    let best: Element | null = null;
+    let bestErr = Infinity;
+    let rivals = 0;
+    for (const {e, p} of prints) {
+      if (!p || used.has(e) || p.kind !== w.kind || p.n !== w.n) {
+        continue;
+      }
+      const err = Math.max(
+        Math.abs(p.box.left - w.box.left),
+        Math.abs(p.box.top - w.box.top),
+        Math.abs(p.box.right - w.box.right),
+        Math.abs(p.box.bottom - w.box.bottom),
+      );
+      if (err <= tol) {
+        rivals++;
+        if (err < bestErr) {
+          bestErr = err;
+          best = e;
+        }
+      }
+    }
+    if (!best) {
+      return fail(`not found: ${w.kind} n${w.n} at ${fmtRect(w.box)}`);
+    }
+    if (rivals > 1 && bestErr > 2) {
+      return fail(`ambiguous: ${w.kind} n${w.n}`);
+    }
+    used.add(best);
+  }
+  const extras = after.elements.length > used.size;
+  trace(
+    `recognised ${used.size}/${wanted.length}${
+      extras
+        ? ` · ${after.elements.length - used.size} neighbours left alone`
+        : ''
     }`,
   );
-  const after = await lassoElements();
-  const got = makeup(after.elements);
-  const size = await pageSize();
-  let inside = after.elements.length > 0;
-  for (const e of after.elements) {
-    const o = await outlineOf(e, size);
-    if (
-      !o ||
-      o.points.some(
-        p =>
-          p.x < target.left - 8 ||
-          p.x > target.right + 8 ||
-          p.y < target.top - 8 ||
-          p.y > target.bottom + 8,
-      )
-    ) {
-      inside = false;
-      break;
-    }
-  }
-  trace(`after: ${after.error ?? got}${inside ? '' : ' · ink outside'}`);
-  if (after.error || got !== expected || !inside) {
-    // Not exactly the same selection: nothing is selected rather than a wrong one.
-    await PluginCommAPI.setLassoBoxState(2);
-    return {
-      ok: false,
-      message:
-        'Move applied, but the selection could not be made again exactly: select it yourself.',
-    };
-  }
-  return {
-    ok: true,
-    message: 'Move applied and selected again: choose the change.',
-  };
+  const nums = new Set([...used].map(e => e.numInPage));
+  return {keep: e => nums.has(e.numInPage), extras};
 }
 
 export async function readSummary(): Promise<Summary> {
@@ -438,12 +532,30 @@ export async function applyStyle(
   traceStart(
     'width' in change ? `Width ${change.width}` : `Colour ${change.color}`,
   );
-  const summary = await readSummary();
-  if (summary.moved) {
-    return {ok: false, message: MOVED_MESSAGE};
+  const prep = await prepareSelection();
+  if (prep.error) {
+    return {ok: false, message: prep.error};
   }
+  const res = await applyPrepared(change, prep, onReady);
+  if (prep.extras) {
+    // Neighbours were caught by the reselection: nothing stays selected.
+    await releaseLasso();
+  }
+  return res;
+}
+
+async function applyPrepared(
+  change: StyleChange,
+  prep: Prepared,
+  onReady: () => void,
+): Promise<{ok: boolean; message: string}> {
+  const summary = await readSummary();
   onReady();
-  if (!summary.error && lassoRoute(summary.strokes, summary.shapes)) {
+  if (
+    !prep.extras &&
+    !summary.error &&
+    lassoRoute(summary.strokes, summary.shapes)
+  ) {
     return applyToLassoShape(change);
   }
   if (!(await ensureWriteAccess())) {
@@ -459,12 +571,15 @@ export async function applyStyle(
   if (error) {
     return {ok: false, message: error};
   }
-  const targets = elements.filter(e => isStroke(e) || isShape(e));
+  const targets = elements.filter(
+    e => (isStroke(e) || isShape(e)) && prep.keep(e),
+  );
   if (!targets.length) {
     return {ok: false, message: 'The selection has no strokes or shapes.'};
   }
   for (const e of targets) {
     restyle(e, change);
+    forPageWrite(e);
   }
   const page =
     ok<number>(await PluginCommAPI.getCurrentPageNum()) ?? targets[0].pageNum;
@@ -495,8 +610,24 @@ export async function applyStyle(
     };
   }
   // Diagnostics only: what the selection reads like now.
-  trace(`read back: ${(await applied(change)) ? 'changed' : 'unchanged'}`);
+  if (!prep.extras) {
+    trace(`read back: ${(await applied(change)) ? 'changed' : 'unchanged'}`);
+  }
   return {ok: true, message: `${targets.length} elements updated.`};
+}
+
+/**
+ * Circles and ellipses read from the page hold TWICE their radius in the radius
+ * fields (measured: hatching came out twice too big), while modifyPageElements
+ * takes them as radii: written back unchanged, circles doubled in size when
+ * several shapes were restyled together. They are halved before writing.
+ */
+export function forPageWrite(e: Element) {
+  const g: any = e.geometry;
+  if (g && (g.type === 'GEO_circle' || g.type === 'GEO_ellipse')) {
+    g.ellipseMajorAxisRadius = g.ellipseMajorAxisRadius / 2;
+    g.ellipseMinorAxisRadius = g.ellipseMinorAxisRadius / 2;
+  }
 }
 
 /** Whether the selection, read again, shows the change. */

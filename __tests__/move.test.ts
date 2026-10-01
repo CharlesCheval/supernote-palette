@@ -5,12 +5,11 @@ jest.mock('sn-plugin-lib', () => ({
     getLassoRect: jest.fn(),
     generateLassoPreview: jest.fn(),
     getLassoElements: jest.fn(),
+    getPenInfo: jest.fn(async () => ({success: true, result: {width: 300}})),
+    getCurrentPageNum: jest.fn(async () => ({success: true, result: 0})),
     getPageDisplaySize: jest.fn(async () => ({success: true, result: {width: 1920, height: 2560}})),
     clearElementCache: jest.fn(),
-    setLassoBoxState: jest.fn(async (s: number) => {
-      mockCalls.push(`state ${s}`);
-      return {success: true, result: true};
-    }),
+    setLassoBoxState: jest.fn(),
     lassoElements: jest.fn(),
     modifyPageElements: jest.fn(),
   },
@@ -19,86 +18,98 @@ jest.mock('sn-plugin-lib', () => ({
   PointUtils: {},
 }));
 import {PluginCommAPI, PluginNoteAPI} from 'sn-plugin-lib';
-import {commitMove} from '../src/selection';
+import {applyStyle, forPageWrite} from '../src/selection';
 import {startAction} from '../src/session';
 
 const api = PluginCommAPI as any;
 const note = PluginNoteAPI as any;
-const shape = (n: number, at: number, size: number) => ({
+const shape = (n: number, at: number, size: number, type = 'GEO_polygon') => ({
   type: 700,
   uuid: `g${n}`,
   numInPage: n,
   pageNum: 0,
   thickness: 300,
-  geometry: {type: 'GEO_polygon', penWidth: 300, penColor: 0, penType: 10, points: [{x: at, y: at}, {x: at + size, y: at + size}]},
+  geometry: {type, penWidth: 300, penColor: 0, penType: 10, points: [{x: at, y: at}, {x: at + size, y: at + size}]},
 });
 const OLD = {left: 82, top: 82, right: 718, bottom: 718};
 const NEW = {left: 992, top: 992, right: 1308, bottom: 1308};
 let selection: any[] = [];
+let lassoed = true;
+let caught: any[] = [];
 
 beforeEach(() => {
   jest.clearAllMocks();
   mockCalls.length = 0;
   selection = [shape(3, 100, 600), shape(4, 150, 500)];
-  api.getLassoRect.mockImplementation(async () => ({success: true, result: OLD}));
+  lassoed = true;
+  api.getLassoRect.mockImplementation(async () => ({success: true, result: lassoed && selection === caught ? NEW : OLD}));
   api.generateLassoPreview.mockImplementation(async () => ({success: true, result: {imagePath: '', rect: NEW, rotateDegree: 0}}));
-  api.getLassoElements.mockImplementation(async () => ({success: true, result: selection}));
+  api.getLassoElements.mockImplementation(async () =>
+    lassoed ? {success: true, result: selection} : {success: false, error: {message: 'No lasso', code: 904}},
+  );
   note.saveCurrentNote.mockImplementation(async () => {
     mockCalls.push('save');
+    lassoed = false; // measured: saving applies the move and lets the lasso go
     return {success: true, result: true};
+  });
+  api.lassoElements.mockImplementation(async (r: any) => {
+    mockCalls.push('lasso');
+    expect(r).toEqual(NEW);
+    lassoed = true;
+    selection = caught;
+    return {success: true, result: true};
+  });
+  api.setLassoBoxState.mockImplementation(async (st: number) => {
+    mockCalls.push(`state ${st}`);
+    lassoed = false;
+    return {success: true, result: true};
+  });
+  api.modifyPageElements.mockImplementation(async (els: any[]) => {
+    mockCalls.push(`modify ${els.map(e => e.numInPage).join(',')}`);
+    return {success: true, result: els.map(e => e.numInPage)};
   });
   startAction();
 });
 
-test('saves, lets the lasso go, lassoes the preview rect, checks the same selection', async () => {
-  api.lassoElements.mockImplementation(async (r: any) => {
-    mockCalls.push('lasso');
-    expect(r).toEqual(NEW);
-    selection = [shape(7, 1000, 300), shape(8, 1025, 250)]; // recreated: new numbers, same kinds
-    return {success: true, result: true};
-  });
-  const res = await commitMove();
+test('moved alone: move applied, same elements (recreated) changed, still selected', async () => {
+  caught = [shape(7, 1000, 300), shape(8, 1025, 250)];
+  const res = await applyStyle({width: 600});
   expect(res.ok).toBe(true);
-  expect(mockCalls).toEqual(['save', 'state 2', 'lasso']);
-  expect(api.modifyPageElements).not.toHaveBeenCalled();
+  expect(mockCalls).toEqual(['save', 'lasso', 'modify 7,8']);
 });
 
-test('a different selection (a neighbour caught): let go, nothing else', async () => {
-  api.lassoElements.mockImplementation(async () => {
-    selection = [shape(7, 1000, 300), shape(8, 1025, 250), shape(9, 1100, 50)];
-    return {success: true, result: true};
-  });
-  const res = await commitMove();
+test('moved over other writing: only the moved elements change, then the lasso is let go', async () => {
+  caught = [
+    shape(20, 995, 310), // neighbour, same kind and points, but not where a moved element must be
+    shape(7, 1000, 300),
+    shape(21, 1100, 60),
+    shape(8, 1025, 250),
+  ];
+  const res = await applyStyle({width: 600});
+  expect(res.ok).toBe(true);
+  expect(mockCalls).toEqual(['save', 'lasso', 'modify 7,8', 'state 2']);
+});
+
+test('a moved element not found for sure: nothing changed, lasso let go', async () => {
+  caught = [shape(7, 1000, 300), shape(21, 1100, 60)];
+  const res = await applyStyle({width: 600});
   expect(res.ok).toBe(false);
-  expect(mockCalls).toEqual(['save', 'state 2', 'state 2']);
-  expect(api.modifyPageElements).not.toHaveBeenCalled();
+  expect(mockCalls).toEqual(['save', 'lasso', 'state 2']);
 });
 
-test('the note cannot be saved: the lasso is not touched', async () => {
+test('the note cannot be saved: the lasso is not touched, nothing changed', async () => {
   note.saveCurrentNote.mockImplementation(async () => ({success: false, error: {message: 'busy', code: 1}}));
-  const res = await commitMove();
+  const res = await applyStyle({width: 600});
   expect(res.ok).toBe(false);
-  expect(api.setLassoBoxState).not.toHaveBeenCalled();
   expect(api.lassoElements).not.toHaveBeenCalled();
+  expect(api.modifyPageElements).not.toHaveBeenCalled();
 });
 
-test('the save already let the lasso go (measured): no second let-go, straight to the reselect', async () => {
-  let gone = false;
-  note.saveCurrentNote.mockImplementation(async () => {
-    mockCalls.push('save');
-    gone = true;
-    return {success: true, result: true};
-  });
-  api.getLassoElements.mockImplementation(async () =>
-    gone ? {success: false, error: {message: 'No lasso action has been performed', code: 904}} : {success: true, result: selection},
-  );
-  api.lassoElements.mockImplementation(async () => {
-    mockCalls.push('lasso');
-    gone = false;
-    selection = [shape(7, 1000, 300), shape(8, 1025, 250)];
-    return {success: true, result: true};
-  });
-  const res = await commitMove();
-  expect(res.ok).toBe(true);
-  expect(mockCalls).toEqual(['save', 'lasso']);
+test('circles: the doubled radius read from the page is halved before writing', () => {
+  const c: any = {geometry: {type: 'GEO_circle', ellipseMajorAxisRadius: 200, ellipseMinorAxisRadius: 200}};
+  forPageWrite(c);
+  expect(c.geometry.ellipseMajorAxisRadius).toBe(100);
+  const poly: any = {geometry: {type: 'GEO_polygon', ellipseMajorAxisRadius: 0}};
+  forPageWrite(poly);
+  expect(poly.geometry.ellipseMajorAxisRadius).toBe(0);
 });
