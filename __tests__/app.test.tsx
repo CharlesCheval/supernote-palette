@@ -21,8 +21,8 @@ test('panel renders sizes, colours, line and fill tools', async () => {
     tree = renderer.create(<App />);
   });
   const buttons = tree!.root.findAllByType(Pressable);
-  // close + tap outside + 15 sizes + pen + 4 colours + 4 lines + density − + + 4 hatches + 4 fills + probe, clear
-  expect(buttons.length).toBe(2 + 15 + 1 + 4 + 4 + 2 + 4 + 4 + 2);
+  // close + tap outside + 15 sizes + pen + 4 colours + 4 lines + density − + + 4 hatches + 4 fills
+  expect(buttons.length).toBe(2 + 15 + 1 + 4 + 4 + 2 + 4 + 4);
 });
 
 test('hatch density: 50 % by default, 10 % steps, capped at 100 %', async () => {

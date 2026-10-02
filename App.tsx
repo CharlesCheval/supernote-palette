@@ -10,7 +10,6 @@
 import React, {useCallback, useEffect, useState} from 'react';
 import {
   DeviceEventEmitter,
-  Image,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -24,8 +23,6 @@ import {DASH_STYLES, DashStyle} from './src/patterns';
 import {LIMITS, getSettings, subscribe, updateSettings} from './src/settings';
 import {PEN_COLORS, StyleChange} from './src/style';
 import {actionLive, newOpening, startAction} from './src/session';
-import {getTrace, subscribeTrace} from './src/trace';
-import {clearProbe, getSnapshots, probe, subscribeProbe} from './src/probe';
 import {PRESETS_MM, formatMm, toInternal} from './src/widths';
 
 export const REFRESH_EVENT = 'strokewidth:refresh';
@@ -174,24 +171,6 @@ function App(): React.JSX.Element {
   // Saved settings (hatch density): re-render when they load or change.
   const [, settingsChanged] = useState(0);
   useEffect(() => subscribe(() => settingsChanged(n => n + 1)), []);
-  // Test builds: what the last action did, step by step.
-  const [, traceChanged] = useState(0);
-  useEffect(() => subscribeTrace(() => traceChanged(n => n + 1)), []);
-  useEffect(() => subscribeProbe(() => traceChanged(n => n + 1)), []);
-  const [probing, setProbing] = useState(false);
-  const runProbe = async () => {
-    if (probing) {
-      return;
-    }
-    setProbing(true);
-    try {
-      await probe();
-    } catch (e: any) {
-      setToast(`Probe: ${e?.message ?? e}`);
-    } finally {
-      setProbing(false);
-    }
-  };
   const density = getSettings().hatchDensity;
   const changeDensity = (delta: number) =>
     updateSettings({hatchDensity: density + delta});
@@ -384,41 +363,7 @@ function App(): React.JSX.Element {
 
         <Text style={styles.info} numberOfLines={1}>
           {describe(summary)}
-          {summary?.hidden ? ` · hidden ${summary.hidden}` : ''}
         </Text>
-        <View style={styles.probeRow}>
-          <Pressable style={styles.probeButton} onPress={runProbe}>
-            <Text style={styles.probeText}>
-              {probing ? 'Probing…' : 'Probe lasso'}
-            </Text>
-          </Pressable>
-          <Pressable style={styles.probeButton} onPress={clearProbe}>
-            <Text style={styles.probeText}>Clear</Text>
-          </Pressable>
-        </View>
-        {getSnapshots().map(snap => (
-          <View key={snap.n} style={styles.snapshot}>
-            <View style={styles.snapshotText}>
-              {snap.lines.map((line, i) => (
-                <Text key={i} style={styles.trace}>
-                  {line}
-                </Text>
-              ))}
-            </View>
-            {snap.image ? (
-              <Image
-                source={{uri: `file://${snap.image}`}}
-                style={styles.preview}
-                resizeMode="contain"
-              />
-            ) : null}
-          </View>
-        ))}
-        {getTrace().map((line, i) => (
-          <Text key={i} style={styles.trace} numberOfLines={1}>
-            {line}
-          </Text>
-        ))}
       </ScrollView>
       {/* The note around the panel: a tap there closes it. */}
       <Pressable
@@ -531,26 +476,6 @@ const styles = StyleSheet.create({
   },
   dim: {opacity: 0.4},
   info: {fontSize: 14, color: '#555555', marginTop: 2},
-  trace: {fontSize: 11, color: '#555555'},
-  probeRow: {flexDirection: 'row', marginTop: 6},
-  probeButton: {
-    borderWidth: 2,
-    borderColor: '#000000',
-    borderRadius: 8,
-    paddingHorizontal: 14,
-    paddingVertical: 6,
-    marginRight: 10,
-  },
-  probeText: {fontSize: 16, color: '#000000'},
-  snapshot: {
-    flexDirection: 'row',
-    borderTopWidth: 1,
-    borderColor: '#bbbbbb',
-    marginTop: 4,
-    paddingTop: 2,
-  },
-  snapshotText: {flex: 1},
-  preview: {width: 120, height: 90, borderWidth: 1, borderColor: '#bbbbbb'},
   toastLayer: {
     ...StyleSheet.absoluteFillObject,
     alignItems: 'center',
