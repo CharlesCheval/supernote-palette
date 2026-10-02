@@ -198,19 +198,32 @@ async function printOf(
 
 /** Lets the lasso go and checks it is gone. */
 export async function releaseLasso(): Promise<boolean> {
-  await withTimeout(
+  const call = (work: Promise<any>) => withTimeout(work, 5000, null);
+  const gone = async () =>
+    !ok<Element[]>(
+      await call(PluginCommAPI.getLassoElements() as Promise<any>),
+    );
+  const res: any = await call(
     PluginCommAPI.setLassoBoxState(2) as Promise<any>,
-    5000,
-    null,
   );
-  const still: any = await withTimeout(
-    PluginCommAPI.getLassoElements() as Promise<any>,
-    5000,
-    null,
+  if (await gone()) {
+    trace('lasso let go: ok');
+    return true;
+  }
+  // Measured (test.25): a lasso made by the plugin is not let go by state 2,
+  // but saving the note lets the lasso go (as measured in test.23).
+  const saved: any = await call(
+    PluginNoteAPI.saveCurrentNote() as Promise<any>,
   );
-  const gone = !ok<Element[]>(still);
-  trace(`lasso let go: ${gone ? 'ok' : 'STILL SELECTED'}`);
-  return gone;
+  const ok2 = await gone();
+  trace(
+    `lasso let go: state 2 ${
+      ok<boolean>(res) ? 'ok' : errorText(res)
+    }, still there; save ${saved?.success ? 'ok' : errorText(saved)} → ${
+      ok2 ? 'gone' : 'STILL SELECTED'
+    }`,
+  );
+  return ok2;
 }
 
 /** How the action finds its elements, once any pending move is applied. */
@@ -346,45 +359,57 @@ export async function prepareSelection(): Promise<Prepared> {
   if (after.error || !after.elements.length) {
     return fail('nothing selected');
   }
-  // Recognise each wanted element among those caught.
+  // Recognise the wanted elements among those caught, by kind and point count
+  // first. When a kind has exactly as many candidates as wanted elements, they
+  // are those (no position needed: shapes read from a lasso do not give a
+  // reliable position, measured with a circle). Only when neighbours of the
+  // same kind and point count were caught too is the position used, with a
+  // strict tolerance and a clear winner, else nothing is changed.
   const prints = [];
   for (const e of after.elements) {
     prints.push({e, p: await printOf(e, size)});
   }
   const used = new Set<Element>();
+  const groups = new Map<string, Print[]>();
   for (const w of wanted) {
-    const tol = Math.max(
-      12,
-      0.08 * Math.max(w.box.right - w.box.left, w.box.bottom - w.box.top),
-    );
-    let best: Element | null = null;
-    let bestErr = Infinity;
-    let rivals = 0;
-    for (const {e, p} of prints) {
-      if (!p || used.has(e) || p.kind !== w.kind || p.n !== w.n) {
-        continue;
-      }
-      const err = Math.max(
-        Math.abs(p.box.left - w.box.left),
-        Math.abs(p.box.top - w.box.top),
-        Math.abs(p.box.right - w.box.right),
-        Math.abs(p.box.bottom - w.box.bottom),
+    const key = `${w.kind}|${w.n}`;
+    groups.set(key, [...(groups.get(key) ?? []), w]);
+  }
+  for (const [key, ws] of groups) {
+    const cands = prints.filter(c => c.p && `${c.p.kind}|${c.p.n}` === key);
+    if (cands.length < ws.length) {
+      return fail(`not found: ${ws.length} × ${key} (${cands.length} caught)`);
+    }
+    if (cands.length === ws.length) {
+      cands.forEach(c => used.add(c.e));
+      continue;
+    }
+    for (const w of ws) {
+      const tol = Math.max(
+        12,
+        0.08 * Math.max(w.box.right - w.box.left, w.box.bottom - w.box.top),
       );
-      if (err <= tol) {
-        rivals++;
-        if (err < bestErr) {
-          bestErr = err;
-          best = e;
-        }
+      const scored = cands
+        .filter(c => !used.has(c.e))
+        .map(c => ({
+          e: c.e,
+          err: Math.max(
+            Math.abs(c.p!.box.left - w.box.left),
+            Math.abs(c.p!.box.top - w.box.top),
+            Math.abs(c.p!.box.right - w.box.right),
+            Math.abs(c.p!.box.bottom - w.box.bottom),
+          ),
+        }))
+        .sort((x, y) => x.err - y.err);
+      const [first, second] = scored;
+      if (!first || first.err > tol) {
+        return fail(`not found: ${key} at ${fmtRect(w.box)}`);
       }
+      if (second && second.err <= tol && second.err - first.err < 4) {
+        return fail(`ambiguous: ${key}`);
+      }
+      used.add(first.e);
     }
-    if (!best) {
-      return fail(`not found: ${w.kind} n${w.n} at ${fmtRect(w.box)}`);
-    }
-    if (rivals > 1 && bestErr > 2) {
-      return fail(`ambiguous: ${w.kind} n${w.n}`);
-    }
-    used.add(best);
   }
   const extras = after.elements.length > used.size;
   trace(

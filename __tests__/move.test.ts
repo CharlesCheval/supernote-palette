@@ -91,7 +91,9 @@ test('moved over other writing: only the moved elements change, then the lasso i
 });
 
 test('a moved element not found for sure: nothing changed, lasso let go', async () => {
-  caught = [shape(7, 1000, 300), shape(21, 1100, 60)];
+  // One moved element is missing; a neighbour of another kind does not stand in for it.
+  const tri = {...shape(21, 1100, 60), geometry: {...shape(21, 1100, 60).geometry, points: [{x: 1100, y: 1100}, {x: 1150, y: 1100}, {x: 1120, y: 1160}]}};
+  caught = [shape(7, 1000, 300), tri];
   const res = await applyStyle({width: 600});
   expect(res.ok).toBe(false);
   expect(mockCalls).toEqual(['save', 'lasso', 'state 2']);
@@ -112,4 +114,28 @@ test('circles: the doubled radius read from the page is halved before writing', 
   const poly: any = {geometry: {type: 'GEO_polygon', ellipseMajorAxisRadius: 0}};
   forPageWrite(poly);
   expect(poly.geometry.ellipseMajorAxisRadius).toBe(0);
+});
+
+test('a lone shape of its kind is recognised without its position (shapes read from a lasso give none reliable)', async () => {
+  selection = [shape(3, 5000, 600)]; // position read wrong, as measured with a circle
+  caught = [shape(9, 1000, 300)];
+  api.getLassoGeometries = jest.fn(async () => ({success: true, result: [caught[0].geometry]}));
+  api.modifyLassoGeometry = jest.fn(async () => {
+    mockCalls.push('modify lasso shape');
+    return {success: true, result: true};
+  });
+  const res = await applyStyle({width: 600});
+  expect(res.ok).toBe(true);
+  expect(mockCalls).toEqual(['save', 'lasso', 'modify lasso shape']);
+});
+
+test('a plugin-made lasso not let go by state 2 is let go by a save', async () => {
+  caught = [shape(20, 995, 310), shape(7, 1000, 300), shape(21, 1100, 60), shape(8, 1025, 250)];
+  api.setLassoBoxState.mockImplementation(async (st: number) => {
+    mockCalls.push(`state ${st}`);
+    return {success: true, result: true}; // but the lasso stays
+  });
+  const res = await applyStyle({width: 600});
+  expect(res.ok).toBe(true);
+  expect(mockCalls).toEqual(['save', 'lasso', 'modify 7,8', 'state 2', 'save']);
 });
