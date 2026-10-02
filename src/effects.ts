@@ -6,10 +6,12 @@ import {
   dashFlags,
   dashPattern,
   dashPolyline,
-  fillPolylines,
   chainRows,
   hatchSegments,
+  fillEdge,
   meanSpacing,
+  trimToInset,
+  splitArrow,
   range,
   visibleRuns,
 } from './patterns';
@@ -223,11 +225,17 @@ async function dashShapes(
   for (const e of shapes) {
     const o = await outlineOf(e, size);
     if (o) {
+      // An arrow keeps its head solid: only the shaft is dashed.
+      const arrow = splitArrow(o.points);
       pieces.push(
-        ...dashPolyline(o.points, dashPattern(dash, px(o.style.penWidth))).map(
-          d => geometry(d, o.style),
-        ),
+        ...dashPolyline(
+          arrow ? arrow.shaft : o.points,
+          dashPattern(dash, px(o.style.penWidth)),
+        ).map(d => geometry(d, o.style)),
       );
+      if (arrow) {
+        pieces.push(geometry(arrow.head, o.style));
+      }
     }
   }
   if (!pieces.length) {
@@ -311,16 +319,27 @@ async function dashes(
 }
 
 /** Hatching / fill spacing and line width (px) for each fill style. */
-function fillPlan(fill: FillStyle, outlineWidth: number, density: number) {
+function fillPlan(
+  fill: FillStyle,
+  outlineWidth: number,
+  density: number,
+  smallest = Infinity,
+) {
   if (!('hatch' in fill)) {
-    const width = 1200; // ≈ 12 px lines, 8 px apart: they merge into a solid area
-    return {width, spacing: 8, inset: px(width) / 2 + px(outlineWidth) / 2};
+    // Lines closer than their width merge into a solid area. On small shapes
+    // they are thinner, so that their ends follow the outline closely.
+    const w = Math.max(4, Math.min(12, smallest / 12));
+    return {
+      width: Math.round(w * 100),
+      spacing: 0.65 * w,
+      inset: w / 2 + px(outlineWidth) / 2 + 1,
+    };
   }
   const width = Math.min(outlineWidth, 500);
   return {
     width,
     spacing: (100 / density) * Math.max(14, 3 * px(width)),
-    inset: px(outlineWidth) / 2,
+    inset: px(outlineWidth) / 2 + px(width) / 2,
   };
 }
 
@@ -421,16 +440,30 @@ function fillPolygon(
   fill: FillStyle,
   density: number,
 ): object[] {
-  const plan = fillPlan(fill, outline.penWidth, density);
+  const xs = range(polygon.map(p => p.x));
+  const ys = range(polygon.map(p => p.y));
+  const smallest = Math.min(xs.max - xs.min, ys.max - ys.min);
+  const plan = fillPlan(fill, outline.penWidth, density, smallest);
   const style = {...outline, penWidth: plan.width, penColor: fill.color};
   if (!('hatch' in fill)) {
-    return fillPolylines(polygon, plan.spacing, plan.inset).map(c =>
-      geometry(c, style),
+    // Rows kept off the outline square to it, then the edge of the fill drawn
+    // along their ends so that it is smooth.
+    const rows = trimToInset(
+      hatchSegments(polygon, 0, plan.spacing, plan.inset, true),
+      polygon,
+      plan.inset,
     );
+    const edge = fillEdge(rows);
+    return [
+      ...chainRows(rows).map(c => geometry(c, style)),
+      ...(edge ? [geometry(edge, style)] : []),
+    ];
   }
-  return hatchSegments(polygon, fill.hatch, plan.spacing, plan.inset).map(s =>
-    geometry(s, style),
-  );
+  return trimToInset(
+    hatchSegments(polygon, fill.hatch, plan.spacing, plan.inset),
+    polygon,
+    plan.inset,
+  ).map(s => geometry(s, style));
 }
 
 /** How many eraser strokes cut this stroke (0 when none, or unknown). */
