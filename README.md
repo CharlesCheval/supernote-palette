@@ -1,8 +1,8 @@
-# Inkwell — Supernote plugin
+# Palette — Supernote plugin
 
 Formerly **Stroke Width**.
 
-Lasso some strokes or shapes, tap **Inkwell** in the lasso toolbar, and pick a pen size (0.1 to 3.5) or one of the four system colours (white, light gray, dark gray, black). Every selected stroke and shape takes it at once, with no confirmation.
+Lasso some strokes or shapes, tap **Palette** in the lasso toolbar, and pick a pen size (0.1 to 3.5) or one of the four system colours (white, light gray, dark gray, black). Every selected stroke and shape takes it at once, with no confirmation.
 
 It is handy after resizing a shape or handwriting with the lasso. Text boxes, pictures and links in the selection are left untouched.
 
@@ -33,7 +33,7 @@ Supernote has no dashed or filled style, so all of them are made of plain geomet
 
 ## Reliability of width and colour changes
 
-Right after a lasso move or resize, while the shape is still selected, the host keeps the transform pending in the lasso: it hands out the old elements, and page changes only show once the lasso is let go and made again. Before every action, Inkwell compares the lasso box (`getLassoRect`) with the ink of the elements it reads. A lasso drawn by hand always encloses its ink, however loosely; only when the ink sticks out of the box (a shrink or move still pending) does it let the lasso go (`setLassoBoxState(2)`, which commits the transform as tapping elsewhere does) and lasso the same rectangle again (`lassoElements`), then act only on the elements selected before, should the rectangle catch neighbours. Otherwise the lasso is left alone (an enlarge still pending cannot be told from a loose lasso, so it is not handled). Every lasso call is bounded to 3 s; if one fails, the lasso is not touched.
+Right after a lasso move or resize, while the shape is still selected, the host keeps the transform pending in the lasso: it hands out the old elements, and page changes only show once the lasso is let go and made again. Before every action, Palette compares the lasso box (`getLassoRect`) with the ink of the elements it reads. A lasso drawn by hand always encloses its ink, however loosely; only when the ink sticks out of the box (a shrink or move still pending) does it let the lasso go (`setLassoBoxState(2)`, which commits the transform as tapping elsewhere does) and lasso the same rectangle again (`lassoElements`), then act only on the elements selected before, should the rectangle catch neighbours. Otherwise the lasso is left alone (an enlarge still pending cannot be told from a loose lasso, so it is not handled). Every lasso call is bounded to 3 s; if one fails, the lasso is not touched.
 
 
 Right after a lasso resize, the host may accept `modifyPageElements` but modify none of the elements (it answers success with an empty list), which left the change to a second try. The result is now checked (every element updated, and the selection read back shows the new value); otherwise the selection is read again and the change applied again, up to three times.

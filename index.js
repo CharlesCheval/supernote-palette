@@ -20,7 +20,7 @@ loadSettings();
 
 const BUTTON = {
   id: BUTTON_WIDTH,
-  name: 'Inkwell',
+  name: 'Palette',
   icon: Image.resolveAssetSource(require('./assets/icon_width.png')).uri,
   editDataTypes: EDIT_TYPES,
   showType: 1,

@@ -69,7 +69,7 @@ export async function loadSettings() {
       }
     }
   } catch (e) {
-    console.warn('[Inkwell] loadSettings', e);
+    console.warn('[Palette] loadSettings', e);
   }
 }
 
@@ -94,5 +94,5 @@ export function updateSettings(patch: Partial<Settings>) {
         `${dir}/${encodeURIComponent(JSON.stringify(snapshot))}`,
       );
     })
-    .catch(e => console.warn('[Inkwell] saveSettings', e));
+    .catch(e => console.warn('[Palette] saveSettings', e));
 }

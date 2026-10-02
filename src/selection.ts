@@ -83,7 +83,7 @@ export async function lassoElements(): Promise<{
 }
 
 /**
- * The lasso is never let go, made again or otherwise driven by Inkwell: doing
+ * The lasso is never let go, made again or otherwise driven by the plugin: doing
  * so (test builds 16 to 19) duplicated multi-stroke selections and once made
  * the note crash and lose its recent history. A limit remains, from the host:
  * right after a lasso move or resize, the host keeps its own transformed copy

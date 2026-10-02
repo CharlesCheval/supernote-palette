@@ -265,7 +265,7 @@ function App(): React.JSX.Element {
     <View style={styles.root}>
       <ScrollView style={styles.card} contentContainerStyle={styles.content}>
         <View style={styles.header}>
-          <Text style={styles.title}>Inkwell</Text>
+          <Text style={styles.title}>Palette</Text>
           <Pressable
             onPress={() => PluginManager.closePluginView()}
             style={styles.close}

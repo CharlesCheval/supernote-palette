@@ -64,12 +64,12 @@ test('a lone selected shape is deleted through the lasso (no element number), th
   expect(mockCalls).toEqual(['lasso delete', 'insert']);
 });
 
-test('a solid fill puts the outline back on top: fill first, outline copy, then the original deleted through the lasso', async () => {
+test('a solid fill never re-inserts or deletes the outline: only the fill lines are added', async () => {
   const {applyFill, FILLS} = require('../src/effects');
   mockCalls.length = 0;
   mockLasso = true;
   startAction();
   const res = await applyFill(FILLS[1], () => {}, 50);
   expect(res.ok).toBe(true);
-  expect(mockCalls).toEqual(['line', 'insert', 'lasso delete']); // fill, outline copy on top, original gone
+  expect(mockCalls).toEqual(['line']);
 });

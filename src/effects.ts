@@ -465,42 +465,7 @@ async function fills(
       message: `Only ${done} of ${lines.length} lines could be drawn.`,
     };
   }
-  // A solid fill can spill onto the outline (round line ends against a curved
-  // outline): the outline is put back on top, which hides it. Only when the
-  // lasso holds exactly the outlines and none was cut with the eraser.
-  const exactly = !releaseAfter && all.length === targets.length;
-  if (!('hatch' in fill) && exactly && !erased && !drawn) {
-    await outlineOnTop(targets);
-  }
   return {ok: true, message: 'Filled.'};
-}
-
-/**
- * Puts the selected outlines above the fill just drawn: the page stacks
- * elements in the order they are inserted, so a copy of each outline is
- * inserted now, then the originals (held by the lasso) are deleted through
- * the lasso. If the copies cannot be inserted, the originals stay as they
- * are (under the fill): an outline is never lost.
- */
-async function outlineOnTop(outlines: Element[]) {
-  const page =
-    ok<number>(await PluginCommAPI.getCurrentPageNum()) ?? outlines[0].pageNum;
-  if (!actionLive()) {
-    return;
-  }
-  outlines.forEach(forPageWrite);
-  const inserted: any = await PluginCommAPI.insertPageElements(outlines, page);
-  const copied = inserted?.success && inserted.result !== false;
-  trace(`outline on top: copies ${copied ? 'ok' : errorText(inserted)}`);
-  if (!copied) {
-    return;
-  }
-  const deleted: any = await PluginCommAPI.deleteLassoElements();
-  trace(
-    `outline on top: originals ${
-      ok<boolean>(deleted) ? 'deleted' : errorText(deleted)
-    }`,
-  );
 }
 
 /** Lines inside one closed outline. */
