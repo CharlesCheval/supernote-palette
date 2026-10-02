@@ -66,3 +66,14 @@ test('simplify keeps the corners of a straight-sided line', () => {
   const line = [...Array.from({length: 50}, (_, i) => ({x: i, y: 0})), ...Array.from({length: 50}, (_, i) => ({x: 49, y: i + 1}))];
   expect(simplify(line, 0.5)).toEqual([{x: 0, y: 0}, {x: 49, y: 0}, {x: 49, y: 50}]);
 });
+
+test('two strokes joined by the gap: the fill still reaches into the corners', () => {
+  // A rectangle in two strokes whose ends miss each other by 8 px at two corners.
+  const a = [{x: 100, y: 100}, {x: 400, y: 100}, {x: 400, y: 292}];
+  const b = [{x: 400, y: 300}, {x: 100, y: 300}, {x: 100, y: 108}];
+  const fill = solidFill([{points: a, width: 6}, {points: b, width: 6}], 8, 5, 16)!;
+  // Inner edge of the ink at 103 / 397 / 297; ring centre line 4 px inside it.
+  const near = (x: number, y: number) => Math.min(...fill.rings.flat().map(p => Math.hypot(p.x - x, p.y - y)));
+  expect(near(107, 107)).toBeLessThan(3); // corner far from the gaps
+  expect(near(393, 293)).toBeLessThan(3);
+});

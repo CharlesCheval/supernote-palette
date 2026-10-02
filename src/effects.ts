@@ -490,9 +490,16 @@ const SOLID_SPACING = 5;
 const FINELINER = 10;
 
 /**
- * A solid fill as one ring along the inner edge of the ink plus straight rows
- * (see inkfill.ts). Strokes are taken as drawn (their ink contour, pressure
- * included) when the SDK gives it; shapes by their outline and exact width.
+ * A solid fill as one ring plus straight rows (see inkfill.ts).
+ *
+ * Hand-drawn strokes are drawn by the host ABOVE geometries (measured: a fill
+ * that ran under a stroke made thicker afterwards was hidden by it). So the
+ * fill goes up to the middle of a stroke, whose inner half hides its edge,
+ * whatever the stroke's real (pressure) width, and even after its width was
+ * changed: the stored ink contour is not updated then, which left a white rim.
+ * A stroke cut with the eraser keeps its erased points in its centre line, so
+ * its drawn contour is used instead. Shapes, drawn below the fill, are taken
+ * with their exact width: the fill stops at their inner edge.
  * Null when nothing enclosed is found: the caller falls back.
  */
 async function solidLines(
@@ -504,12 +511,23 @@ async function solidLines(
   for (const e of targets) {
     const o = await outlineOf(e, size);
     if (isStroke(e)) {
-      const loops = await contourOf(e, size);
-      if (loops.length && o) {
-        const runs = visibleRuns(o.points, await drawFlags(e, o.points.length));
-        inks.push({loops, centre: runs.flat()});
-        continue;
+      if ((await eraserCount(e)) > 0) {
+        const loops = await contourOf(e, size);
+        if (loops.length && o) {
+          inks.push({loops, centre: o.points});
+          continue;
+        }
       }
+      if (o) {
+        // Visible runs only (a partial eraser hides points through draw flags).
+        for (const run of visibleRuns(
+          o.points,
+          await drawFlags(e, o.points.length),
+        )) {
+          inks.push({points: run, width: 2});
+        }
+      }
+      continue;
     }
     if (o) {
       inks.push({points: o.points, width: px(o.style.penWidth)});

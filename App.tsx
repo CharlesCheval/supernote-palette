@@ -167,6 +167,7 @@ function ToolRow({
 function App(): React.JSX.Element {
   const [summary, setSummary] = useState<Summary | null>(null);
   const [busy, setBusy] = useState(false);
+  const [working, setWorking] = useState(false);
   const [toast, setToast] = useState('');
   // Saved settings (hatch density): re-render when they load or change.
   const [, settingsChanged] = useState(0);
@@ -188,6 +189,7 @@ function App(): React.JSX.Element {
     // and an action still running from before must not touch the new one.
     newOpening();
     setBusy(false);
+    setWorking(false);
     setToast('');
     setSummary(null);
     readSummary()
@@ -227,16 +229,13 @@ function App(): React.JSX.Element {
     setBusy(true);
     setToast('');
     startAction();
-    let closed = false;
-    const close = () => {
-      if (!closed) {
-        closed = true;
-        PluginManager.closePluginView();
-      }
-    };
+    // Once the selection is read, the panel gives way to a small "Working…"
+    // box: a large fill takes seconds, and without a sign the page seemed
+    // frozen. The panel closes when the work is done.
+    const ready = () => setWorking(true);
     let failure = '';
     try {
-      const res = await withTimeout(action(close), ACTION_TIMEOUT_MS);
+      const res = await withTimeout(action(ready), ACTION_TIMEOUT_MS);
       failure = res.ok ? '' : res.message;
     } catch (e: any) {
       failure = `Error: ${e?.message ?? e}`;
@@ -246,13 +245,11 @@ function App(): React.JSX.Element {
     if (!actionLive()) {
       return; // the panel was opened again meanwhile: this result is old news
     }
+    setWorking(false);
     if (failure) {
       setToast(failure);
-      if (closed) {
-        PluginManager.showPluginView();
-      }
     } else {
-      close();
+      PluginManager.closePluginView();
     }
   };
 
@@ -260,6 +257,16 @@ function App(): React.JSX.Element {
     run(ready => applyStyle(change, ready));
 
   const pen = summary?.penWidth;
+
+  if (working) {
+    return (
+      <View style={styles.workingLayer} pointerEvents="none">
+        <View style={styles.workingBox}>
+          <Text style={styles.workingText}>Working…</Text>
+        </View>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.root}>
@@ -476,6 +483,21 @@ const styles = StyleSheet.create({
   },
   dim: {opacity: 0.4},
   info: {fontSize: 14, color: '#555555', marginTop: 2},
+  workingLayer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'transparent',
+  },
+  workingBox: {
+    paddingHorizontal: 40,
+    paddingVertical: 22,
+    backgroundColor: '#ffffff',
+    borderWidth: 2,
+    borderColor: '#000000',
+    borderRadius: 14,
+  },
+  workingText: {fontSize: 24, color: '#000000'},
   toastLayer: {
     ...StyleSheet.absoluteFillObject,
     alignItems: 'center',

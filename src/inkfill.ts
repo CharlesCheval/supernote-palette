@@ -80,6 +80,7 @@ function flood(
   open: (i: number) => boolean,
   seeds: Iterable<number>,
   maxSteps = Infinity,
+  diagonals = false,
 ): Int32Array {
   const n = g.cols * g.rows;
   const dist = new Int32Array(n).fill(-1);
@@ -113,6 +114,30 @@ function flood(
     if (i + g.cols < n && dist[i + g.cols] < 0 && open(i + g.cols)) {
       dist[i + g.cols] = dist[i] + 1;
       queue[tail++] = i + g.cols;
+    }
+    if (diagonals) {
+      const y = (i - x) / g.cols;
+      for (const [dx, dy] of [
+        [-1, -1],
+        [1, -1],
+        [-1, 1],
+        [1, 1],
+      ]) {
+        const nx = x + dx;
+        const ny = y + dy;
+        const j = ny * g.cols + nx;
+        if (
+          nx >= 0 &&
+          ny >= 0 &&
+          nx < g.cols &&
+          ny < g.rows &&
+          dist[j] < 0 &&
+          open(j)
+        ) {
+          dist[j] = dist[i] + 1;
+          queue[tail++] = j;
+        }
+      }
     }
   }
   return dist;
@@ -368,40 +393,13 @@ export function solidFill(
   const n = g.cols * g.rows;
   const ink = drawInk(g, inks);
 
-  // Outside: reached from the border without coming within `gap` of the ink.
-  const nearInk =
-    gap > 0 ? flood(g, () => true, inkCells(ink), Math.ceil(gap / cell)) : null;
-  const blocked = (i: number) =>
-    ink[i] === 1 || (nearInk !== null && nearInk[i] >= 0);
-  const border: number[] = [];
-  for (let x = 0; x < g.cols; x++) {
-    border.push(x, (g.rows - 1) * g.cols + x);
-  }
-  for (let y = 0; y < g.rows; y++) {
-    border.push(y * g.cols, y * g.cols + g.cols - 1);
-  }
-  const outside = flood(g, i => !blocked(i), border);
-  const core: number[] = [];
-  for (let i = 0; i < n; i++) {
-    if (!blocked(i) && outside[i] < 0) {
-      core.push(i);
-    }
-  }
-  if (!core.length) {
+  // A closed outline encloses its inside as drawn (exact, corners included).
+  // Only when it does not (ends of several strokes not quite meeting) are the
+  // ends joined by `gap`.
+  const inside = enclose(g, ink, 0) ?? (gap > 0 ? enclose(g, ink, gap) : null);
+  if (!inside) {
     return null;
   }
-  // Grow the enclosed core back to the ink (never outside).
-  const grown = flood(
-    g,
-    i => !ink[i] && outside[i] < 0,
-    core,
-    gap > 0 ? Math.ceil(gap / cell) + 1 : Infinity,
-  );
-  const inside = new Uint8Array(n);
-  for (let i = 0; i < n; i++) {
-    inside[i] = grown[i] >= 0 ? 1 : 0;
-  }
-
   const d = distanceInside(g, inside);
   // Contour loops are drawn as walls about 1.5 cells thick, centred on the real
   // edge: the inside starts that much short of it, which is made up here.
@@ -446,6 +444,58 @@ export function solidFill(
     }
   }
   return rings.length || rows.length ? {rings, rows} : null;
+}
+
+/**
+ * Inside cells (1) of what the ink encloses, or null. With a `gap`, the ink is
+ * first thickened by it so that nearly meeting ends meet, then the enclosed
+ * part grows back to the real ink — diagonals included, or it could not reach
+ * into corners — but no further than the gap, so it never leaks out through
+ * an opening.
+ */
+function enclose(g: Grid, ink: Uint8Array, gap: number): Uint8Array | null {
+  const n = g.cols * g.rows;
+  const nearInk =
+    gap > 0
+      ? flood(g, () => true, inkCells(ink), Math.ceil(gap / g.cell))
+      : null;
+  const blocked = (i: number) =>
+    ink[i] === 1 || (nearInk !== null && nearInk[i] >= 0);
+  const border: number[] = [];
+  for (let x = 0; x < g.cols; x++) {
+    border.push(x, (g.rows - 1) * g.cols + x);
+  }
+  for (let y = 0; y < g.rows; y++) {
+    border.push(y * g.cols, y * g.cols + g.cols - 1);
+  }
+  const outside = flood(g, i => !blocked(i), border);
+  const core: number[] = [];
+  for (let i = 0; i < n; i++) {
+    if (!blocked(i) && outside[i] < 0) {
+      core.push(i);
+    }
+  }
+  if (!core.length) {
+    return null;
+  }
+  const inside = new Uint8Array(n);
+  if (gap === 0) {
+    for (const i of core) {
+      inside[i] = 1;
+    }
+    return inside;
+  }
+  const grown = flood(
+    g,
+    i => !ink[i] && outside[i] < 0,
+    core,
+    Math.ceil(gap / g.cell) + 1,
+    true,
+  );
+  for (let i = 0; i < n; i++) {
+    inside[i] = grown[i] >= 0 ? 1 : 0;
+  }
+  return inside;
 }
 
 function inkCells(ink: Uint8Array): number[] {
