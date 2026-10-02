@@ -362,12 +362,24 @@ export function simplify(points: P[], tol: number): P[] {
   return points.filter((_, i) => keep[i]);
 }
 
-export type SolidFill = {rings: P[][]; rows: [P, P][]};
+export type SolidFill = {
+  rings: P[][];
+  rows: [P, P][];
+  /** Rows of the fine pass, in the parts too narrow for the main lines. */
+  fineRows: [P, P][];
+  /** What is inserted: few continuous paths, each with its line width. */
+  paths: {points: P[]; width: number}[];
+};
+
+/** Fine pass: lines this wide (px), as far apart as the grid. */
+const FINE_WIDTH = 3;
 
 /**
  * Ring and rows of a solid fill, for lines `width` px wide, rows `spacing` px
- * apart. `gap`: outline ends closer than this are taken as joined (shapes made
- * of several strokes). Null when the ink encloses nothing.
+ * apart, then a fine pass in the parts too narrow for them (sharp tips), and
+ * the whole chained into as few continuous paths as possible. `gap`: outline
+ * ends closer than this are taken as joined (shapes made of several strokes).
+ * Null when the ink encloses nothing.
  */
 export function solidFill(
   inks: Ink[],
@@ -409,41 +421,281 @@ export function solidFill(
     .map(l => simplify(l, 0.6))
     .filter(l => l.length >= 4);
 
-  // Rows: where the distance to the ink is at least r (inside the ring's line).
+  // Main rows: where the distance to the ink is at least r (inside the ring).
+  const core = new Uint8Array(n);
+  for (let i = 0; i < n; i++) {
+    core[i] = d[i] >= r ? 1 : 0;
+  }
+  const rows = rowsIn(g, core, spacing);
+
+  // Fine pass: inside cells the main lines do not reach — farther than r (plus
+  // a cell) from the core, along whose edge the ring runs — i.e. tips narrower
+  // than a main line. Not the band along the edge, which the ring covers.
+  const reach = flood(g, i => inside[i] === 1, coreCells(core), Infinity, true);
+  const left = new Uint8Array(n);
+  let leftCount = 0;
+  for (let i = 0; i < n; i++) {
+    if (inside[i] && !core[i] && (reach[i] < 0 || reach[i] * cell > r + cell)) {
+      left[i] = 1;
+      leftCount++;
+    }
+  }
+  const fineRows = leftCount ? rowsIn(g, left, cell) : [];
+
+  // Chained paths: main lines move through the core (their connections run
+  // inside the filled area, unseen); fine lines anywhere inside, half their
+  // width off the edge (under the main fill, unseen). An isolated part gets
+  // its own path.
+  const fineWay = new Uint8Array(n);
+  for (let i = 0; i < n; i++) {
+    fineWay[i] = left[i] || d[i] >= FINE_WIDTH / 2 ? 1 : 0;
+  }
+  const paths = [
+    ...chain(g, core, rings, rows).map(points => ({points, width})),
+    ...chain(g, fineWay, [], fineRows).map(points => ({
+      points,
+      width: FINE_WIDTH,
+    })),
+  ];
+  return paths.length ? {rings, rows, fineRows, paths} : null;
+}
+
+function coreCells(mask: Uint8Array): number[] {
+  const out: number[] = [];
+  for (let i = 0; i < mask.length; i++) {
+    if (mask[i]) {
+      out.push(i);
+    }
+  }
+  return out;
+}
+
+/** Horizontal segments `spacing` px apart through the cells of a mask. */
+function rowsIn(g: Grid, mask: Uint8Array, spacing: number): [P, P][] {
   let top = Infinity;
   let bottom = -Infinity;
-  for (let i = 0; i < n; i++) {
-    if (d[i] >= r) {
-      const y = g.y0 + Math.floor(i / g.cols) * cell;
+  for (let i = 0; i < mask.length; i++) {
+    if (mask[i]) {
+      const y = g.y0 + Math.floor(i / g.cols) * g.cell;
       top = Math.min(top, y);
       bottom = Math.max(bottom, y);
     }
   }
   const rows: [P, P][] = [];
-  if (top <= bottom) {
-    const span = bottom - top;
-    const step =
-      span > 0 ? span / Math.max(1, Math.ceil(span / spacing)) : spacing;
-    for (let y = top; y <= bottom + 1e-9; y += step) {
-      const gy = Math.round((y - g.y0) / cell);
-      let start = -1;
-      for (let gx = 0; gx <= g.cols; gx++) {
-        const on = gx < g.cols && d[gy * g.cols + gx] >= r;
-        if (on && start < 0) {
-          start = gx;
-        } else if (!on && start >= 0) {
-          const xa = g.x0 + start * cell;
-          const xb = g.x0 + (gx - 1) * cell;
-          rows.push([
-            {x: xa, y},
-            {x: Math.max(xa + 0.5, xb), y},
-          ]);
-          start = -1;
-        }
+  if (top > bottom) {
+    return rows;
+  }
+  const span = bottom - top;
+  const step =
+    span > 0 ? span / Math.max(1, Math.ceil(span / spacing)) : spacing;
+  for (let y = top; y <= bottom + 1e-9; y += step) {
+    const gy = Math.round((y - g.y0) / g.cell);
+    let start = -1;
+    for (let gx = 0; gx <= g.cols; gx++) {
+      const on = gx < g.cols && mask[gy * g.cols + gx] === 1;
+      if (on && start < 0) {
+        start = gx;
+      } else if (!on && start >= 0) {
+        const xa = g.x0 + start * g.cell;
+        const xb = g.x0 + (gx - 1) * g.cell;
+        rows.push([
+          {x: xa, y},
+          {x: Math.max(xa + 0.5, xb), y},
+        ]);
+        start = -1;
       }
     }
   }
-  return rings.length || rows.length ? {rings, rows} : null;
+  return rows;
+}
+
+/** Longest single path inserted; longer ones are cut (to stay light for the host). */
+const MAX_PATH_POINTS = 3000;
+
+/**
+ * Chains loops (gone round in full) and segments into continuous paths. From
+ * the end of each piece, the nearest piece still to draw is joined, straight
+ * when the straight line stays on `way` cells, otherwise along the shortest
+ * way through them; a piece that cannot be reached starts a new path.
+ */
+function chain(
+  g: Grid,
+  way: Uint8Array,
+  loops: P[][],
+  segments: [P, P][],
+): P[][] {
+  type Piece = {pts: P[]; loop: boolean};
+  const pieces: Piece[] = [
+    ...loops.map(l => ({pts: l.slice(0, -1), loop: true})),
+    ...segments.map(([a, b]) => ({pts: [a, b], loop: false})),
+  ];
+  const cellOf = (p: P) => {
+    const gx = Math.min(
+      g.cols - 1,
+      Math.max(0, Math.round((p.x - g.x0) / g.cell)),
+    );
+    const gy = Math.min(
+      g.rows - 1,
+      Math.max(0, Math.round((p.y - g.y0) / g.cell)),
+    );
+    return gy * g.cols + gx;
+  };
+  // The nearest `way` cell to a point (pieces may end a hair off it).
+  const snap = (p: P): number => {
+    const c = cellOf(p);
+    if (way[c]) {
+      return c;
+    }
+    const cx = c % g.cols;
+    const cy = (c - cx) / g.cols;
+    for (let rad = 1; rad <= 3; rad++) {
+      for (let dy = -rad; dy <= rad; dy++) {
+        for (let dx = -rad; dx <= rad; dx++) {
+          const x = cx + dx;
+          const y = cy + dy;
+          if (
+            x >= 0 &&
+            y >= 0 &&
+            x < g.cols &&
+            y < g.rows &&
+            way[y * g.cols + x]
+          ) {
+            return y * g.cols + x;
+          }
+        }
+      }
+    }
+    return -1;
+  };
+  const straight = (a: P, b: P) => {
+    const steps = Math.max(
+      1,
+      Math.ceil(Math.hypot(b.x - a.x, b.y - a.y) / (g.cell / 2)),
+    );
+    for (let k = 0; k <= steps; k++) {
+      const c = cellOf({
+        x: a.x + ((b.x - a.x) * k) / steps,
+        y: a.y + ((b.y - a.y) * k) / steps,
+      });
+      if (!way[c]) {
+        return false;
+      }
+    }
+    return true;
+  };
+  // Shortest way through `way` cells (8-neighbours), as points, or null.
+  const route = (a: P, b: P): P[] | null => {
+    const from = snap(a);
+    const to = snap(b);
+    if (from < 0 || to < 0) {
+      return null;
+    }
+    const prev = new Int32Array(way.length).fill(-1);
+    const queue = new Int32Array(way.length);
+    let head = 0;
+    let tail = 0;
+    prev[from] = from;
+    queue[tail++] = from;
+    while (head < tail && prev[to] < 0) {
+      const i = queue[head++];
+      const x = i % g.cols;
+      const y = (i - x) / g.cols;
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const nx = x + dx;
+          const ny = y + dy;
+          const j = ny * g.cols + nx;
+          if (
+            (dx || dy) &&
+            nx >= 0 &&
+            ny >= 0 &&
+            nx < g.cols &&
+            ny < g.rows &&
+            way[j] &&
+            prev[j] < 0
+          ) {
+            prev[j] = i;
+            queue[tail++] = j;
+          }
+        }
+      }
+    }
+    if (prev[to] < 0) {
+      return null;
+    }
+    const cells: number[] = [];
+    for (let c = to; c !== from; c = prev[c]) {
+      cells.push(c);
+    }
+    cells.push(from);
+    const pts = cells.reverse().map(c => ({
+      x: g.x0 + (c % g.cols) * g.cell,
+      y: g.y0 + Math.floor(c / g.cols) * g.cell,
+    }));
+    return simplify(pts, 0.5);
+  };
+
+  const paths: P[][] = [];
+  const done = new Uint8Array(pieces.length);
+  let current: P[] | null = null;
+  const dist2 = (a: P, b: P) => (a.x - b.x) ** 2 + (a.y - b.y) ** 2;
+  for (let count = 0; count < pieces.length; count++) {
+    const here: P | null = current ? current[current.length - 1] : null;
+    // Nearest piece to draw, and from which end (or point, for a loop).
+    let best = -1;
+    let bestAt = 0;
+    let bestD = Infinity;
+    for (let k = 0; k < pieces.length; k++) {
+      if (done[k]) {
+        continue;
+      }
+      if (!here) {
+        best = k;
+        bestAt = 0;
+        break;
+      }
+      const pts = pieces[k].pts;
+      const ends = pieces[k].loop ? pts.map((_, i) => i) : [0, pts.length - 1];
+      for (const i of ends) {
+        const dd = dist2(here, pts[i]);
+        if (dd < bestD) {
+          bestD = dd;
+          best = k;
+          bestAt = i;
+        }
+      }
+    }
+    done[best] = 1;
+    const piece = pieces[best];
+    const pts = piece.loop
+      ? [
+          ...piece.pts.slice(bestAt),
+          ...piece.pts.slice(0, bestAt),
+          piece.pts[bestAt],
+        ]
+      : bestAt === 0
+      ? piece.pts
+      : [...piece.pts].reverse();
+    let joined = false;
+    if (current && here) {
+      if (straight(here, pts[0])) {
+        joined = true;
+      } else {
+        const way_ = route(here, pts[0]);
+        if (way_) {
+          current.push(...way_);
+          joined = true;
+        }
+      }
+    }
+    if (joined && current && current.length + pts.length <= MAX_PATH_POINTS) {
+      current.push(...pts);
+    } else {
+      current = [...pts];
+      paths.push(current);
+    }
+  }
+  return paths;
 }
 
 /**

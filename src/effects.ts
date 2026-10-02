@@ -542,10 +542,11 @@ async function solidLines(
     penColor: fill.color,
     penWidth: SOLID_WIDTH * 100,
   };
-  return [
-    ...area.rings.map(r => geometry(r, style)),
-    ...chainRows(area.rows).map(c => geometry(c, style)),
-  ];
+  // A few continuous paths (usually one per enclosed part): a lasso touching
+  // any bit of the fill takes it whole, and the host inserts few elements.
+  return area.paths.map(p =>
+    geometry(p.points, {...style, penWidth: Math.round(p.width * 100)}),
+  );
 }
 
 /** Lines inside one closed outline. */

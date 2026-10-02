@@ -77,3 +77,38 @@ test('two strokes joined by the gap: the fill still reaches into the corners', (
   expect(near(107, 107)).toBeLessThan(3); // corner far from the gaps
   expect(near(393, 293)).toBeLessThan(3);
 });
+
+const star = (spikes: number, r1: number, r2: number) =>
+  Array.from({length: spikes * 2}, (_, i) => {
+    const t = (Math.PI * i) / spikes;
+    const r = i % 2 ? r2 : r1;
+    return {x: 600 + r * Math.cos(t), y: 600 + r * Math.sin(t)};
+  });
+
+test('sharp tips too narrow for the main lines get the fine pass', () => {
+  const s = star(8, 260, 110);
+  const fill = solidFill([{points: [...s, s[0]], width: 2}], 8, 5)!;
+  expect(fill.fineRows.length).toBeGreaterThan(8);
+  // Fine rows reach further out into the tips than the main rows do.
+  const reachOf = (rows: [P, P][]) => Math.max(...rows.flat().map(p => dist(p, {x: 600, y: 600})));
+  expect(reachOf(fill.fineRows)).toBeGreaterThan(reachOf(fill.rows) + 10);
+  expect(reachOf(fill.fineRows)).toBeGreaterThan(250); // tips end at 260
+  expect(fill.paths.some(p => p.width === 3)).toBe(true);
+});
+
+test('the main fill of one enclosed part is ONE continuous path, its joins inside the filled area', () => {
+  const blob = Array.from({length: 400}, (_, i) => {
+    const t = (2 * Math.PI * i) / 400;
+    const r = 200 + 50 * Math.sin(3 * t);
+    return {x: 600 + r * Math.cos(t), y: 600 + r * Math.sin(t)};
+  });
+  const fill = solidFill([{points: [...blob, blob[0]], width: 2}], 8, 5)!;
+  const main = fill.paths.filter(p => p.width === 8);
+  expect(main).toHaveLength(1);
+  // Every point of the path is inside the outline, at least half a line from it.
+  const inside = (p: P) => {
+    const t = Math.atan2(p.y - 600, p.x - 600);
+    return dist(p, {x: 600, y: 600}) <= 200 + 50 * Math.sin(3 * t) - 4;
+  };
+  expect(main[0].points.every(inside)).toBe(true);
+});
