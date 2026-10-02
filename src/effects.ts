@@ -8,9 +8,8 @@ import {
   dashPolyline,
   chainRows,
   hatchSegments,
-  fillEdge,
+  fillPolylines,
   meanSpacing,
-  trimToInset,
   splitArrow,
   range,
   visibleRuns,
@@ -29,6 +28,7 @@ import {
   release,
 } from './selection';
 import {getSettings} from './settings';
+import {trace} from './trace';
 import {ABANDONED, actionLive} from './session';
 import {
   Outline,
@@ -246,9 +246,18 @@ async function dashShapes(
   if (!actionLive()) {
     return {done: 0, why: ABANDONED.message};
   }
-  const deleted: any = await PluginCommAPI.deletePageElements(
-    shapes.map(e => e.numInPage),
-    page,
+  // The lasso is let go first: while it holds the shapes, the host keeps its own
+  // copy of them and wrote it back when the lasso was let go, so a shape deleted
+  // by number came back next to its dashes (reported).
+  if (!(await releaseLasso())) {
+    return {done: 0, why: 'the selection could not be let go: nothing changed'};
+  }
+  const nums = shapes.map(e => e.numInPage);
+  const deleted: any = await PluginCommAPI.deletePageElements(nums, page);
+  trace(
+    `delete shapes #${nums.join(',')}: ${
+      ok<boolean>(deleted) ? 'ok' : errorText(deleted)
+    }`,
   );
   if (!ok<boolean>(deleted)) {
     return {done: 0, why: errorText(deleted)};
@@ -319,27 +328,16 @@ async function dashes(
 }
 
 /** Hatching / fill spacing and line width (px) for each fill style. */
-function fillPlan(
-  fill: FillStyle,
-  outlineWidth: number,
-  density: number,
-  smallest = Infinity,
-) {
+function fillPlan(fill: FillStyle, outlineWidth: number, density: number) {
   if (!('hatch' in fill)) {
-    // Lines closer than their width merge into a solid area. On small shapes
-    // they are thinner, so that their ends follow the outline closely.
-    const w = Math.max(4, Math.min(12, smallest / 12));
-    return {
-      width: Math.round(w * 100),
-      spacing: 0.65 * w,
-      inset: w / 2 + px(outlineWidth) / 2 + 1,
-    };
+    const width = 1200; // ≈ 12 px lines, 8 px apart: they merge into a solid area
+    return {width, spacing: 8, inset: px(width) / 2 + px(outlineWidth) / 2};
   }
   const width = Math.min(outlineWidth, 500);
   return {
     width,
     spacing: (100 / density) * Math.max(14, 3 * px(width)),
-    inset: px(outlineWidth) / 2 + px(width) / 2,
+    inset: px(outlineWidth) / 2,
   };
 }
 
@@ -440,30 +438,16 @@ function fillPolygon(
   fill: FillStyle,
   density: number,
 ): object[] {
-  const xs = range(polygon.map(p => p.x));
-  const ys = range(polygon.map(p => p.y));
-  const smallest = Math.min(xs.max - xs.min, ys.max - ys.min);
-  const plan = fillPlan(fill, outline.penWidth, density, smallest);
+  const plan = fillPlan(fill, outline.penWidth, density);
   const style = {...outline, penWidth: plan.width, penColor: fill.color};
   if (!('hatch' in fill)) {
-    // Rows kept off the outline square to it, then the edge of the fill drawn
-    // along their ends so that it is smooth.
-    const rows = trimToInset(
-      hatchSegments(polygon, 0, plan.spacing, plan.inset, true),
-      polygon,
-      plan.inset,
+    return fillPolylines(polygon, plan.spacing, plan.inset).map(c =>
+      geometry(c, style),
     );
-    const edge = fillEdge(rows);
-    return [
-      ...chainRows(rows).map(c => geometry(c, style)),
-      ...(edge ? [geometry(edge, style)] : []),
-    ];
   }
-  return trimToInset(
-    hatchSegments(polygon, fill.hatch, plan.spacing, plan.inset),
-    polygon,
-    plan.inset,
-  ).map(s => geometry(s, style));
+  return hatchSegments(polygon, fill.hatch, plan.spacing, plan.inset).map(s =>
+    geometry(s, style),
+  );
 }
 
 /** How many eraser strokes cut this stroke (0 when none, or unknown). */

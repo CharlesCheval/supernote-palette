@@ -10,9 +10,6 @@ import {
   meanSpacing,
   range,
   splitArrow,
-  trimToInset,
-  distToOutline,
-  fillEdge,
   visibleRuns,
 } from '../src/patterns';
 
@@ -163,19 +160,4 @@ test('a ShapeSnap arrow splits into its shaft and its solid head', () => {
   const arrow = [tail, tip, left, right, tip, ...rungs];
   expect(splitArrow(arrow)).toEqual({shaft: [tail, tip], head: arrow.slice(1)});
   expect(splitArrow([tail, tip, {x: 300, y: 300}, {x: 0, y: 300}, tail])).toBeNull(); // a square
-});
-
-test('fill rows are kept off the outline square to it (top and bottom of a circle too)', () => {
-  const circle = ellipsePoints({x: 200, y: 200}, 60, 60, 0);
-  const inset = 6;
-  const rows = trimToInset(hatchSegments(circle, 0, 4, inset, true), circle, inset);
-  expect(rows.length).toBeGreaterThan(20);
-  for (const [a, b] of rows) {
-    expect(distToOutline(a, circle)).toBeGreaterThanOrEqual(inset - 1e-9);
-    expect(distToOutline(b, circle)).toBeGreaterThanOrEqual(inset - 1e-9);
-  }
-  const edge = fillEdge(rows)!;
-  expect(edge).not.toBeNull();
-  expect(edge[0]).toEqual(edge[edge.length - 1]);
-  expect(fillEdge(hatchSegments([{x: 0, y: 0}, {x: 30, y: 0}, {x: 30, y: 70}, {x: 70, y: 70}, {x: 70, y: 0}, {x: 100, y: 0}, {x: 100, y: 100}, {x: 0, y: 100}], 0, 10))).toBeNull(); // a U: two runs per row
 });
