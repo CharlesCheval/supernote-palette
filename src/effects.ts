@@ -28,7 +28,7 @@ import {
   release,
 } from './selection';
 import {getSettings} from './settings';
-import {trace} from './trace';
+import {trace, traceStart} from './trace';
 import {ABANDONED, actionLive} from './session';
 import {
   Outline,
@@ -220,6 +220,7 @@ async function dashShapes(
   shapes: Element[],
   dash: DashStyle,
   size: Size | null,
+  lassoHoldsExactly: boolean,
 ): Promise<{done: number; why?: string}> {
   const pieces: object[] = [];
   for (const e of shapes) {
@@ -246,23 +247,54 @@ async function dashShapes(
   if (!actionLive()) {
     return {done: 0, why: ABANDONED.message};
   }
-  // The lasso is let go first: while it holds the shapes, the host keeps its own
-  // copy of them and wrote it back when the lasso was let go, so a shape deleted
-  // by number came back next to its dashes (reported).
-  if (!(await releaseLasso())) {
-    return {done: 0, why: 'the selection could not be let go: nothing changed'};
-  }
   const nums = shapes.map(e => e.numInPage);
-  const deleted: any = await PluginCommAPI.deletePageElements(nums, page);
   trace(
-    `delete shapes #${nums.join(',')}: ${
-      ok<boolean>(deleted) ? 'ok' : errorText(deleted)
+    `dash ${shapes.length} shape(s) #${nums.join(',')} (${shapes
+      .map(e => e.geometry?.type)
+      .join(', ')}) · ${pieces.length} dashes · ${
+      lassoHoldsExactly ? 'deleted through the lasso' : 'deleted by number'
     }`,
   );
-  if (!ok<boolean>(deleted)) {
-    return {done: 0, why: errorText(deleted)};
+  if (lassoHoldsExactly) {
+    // The lasso holds exactly these shapes: deleted through the lasso itself,
+    // as its own eraser does. No element number is involved (right after a
+    // shape is created they may not be settled) and the lasso keeps no copy.
+    const deleted: any = await PluginCommAPI.deleteLassoElements();
+    const still: any = await PluginCommAPI.getLassoElements();
+    trace(
+      `lasso delete: ${
+        ok<boolean>(deleted) ? 'ok' : errorText(deleted)
+      } · lasso ${
+        ok<Element[]>(still)
+          ? `still holds ${ok<Element[]>(still)!.length}`
+          : 'gone'
+      }`,
+    );
+    if (!ok<boolean>(deleted)) {
+      return {done: 0, why: errorText(deleted)};
+    }
+  } else {
+    // Mixed selection: the lasso is let go first (while it holds the shapes the
+    // host keeps its own copy and writes it back), then the shapes are deleted
+    // by number.
+    if (!(await releaseLasso())) {
+      return {
+        done: 0,
+        why: 'the selection could not be let go: nothing changed',
+      };
+    }
+    const deleted: any = await PluginCommAPI.deletePageElements(nums, page);
+    trace(
+      `delete #${nums.join(',')}: ${
+        ok<boolean>(deleted) ? 'ok' : errorText(deleted)
+      }`,
+    );
+    if (!ok<boolean>(deleted)) {
+      return {done: 0, why: errorText(deleted)};
+    }
   }
   const done = await insertAll(pieces);
+  trace(`dashes drawn: ${done}/${pieces.length}`);
   if (done < pieces.length) {
     // Put the shapes back rather than leave them half dashed.
     shapes.forEach(forPageWrite);
@@ -285,6 +317,7 @@ async function dashes(
   dash: DashStyle,
   onReady: OnReady = () => {},
 ): Promise<Result> {
+  traceStart(`Dash ${dash}`);
   const {all, targets, error} = await selection();
   if (error || !targets.length) {
     release(all);
@@ -315,7 +348,10 @@ async function dashes(
     }
   }
   if (shapes.length) {
-    const r = await dashShapes(shapes, dash, size);
+    // Only shapes selected, nothing else: they can go through the lasso.
+    const exactly =
+      !releaseAfter && !strokes.length && all.length === shapes.length;
+    const r = await dashShapes(shapes, dash, size, exactly);
     if (r.why) {
       problems.push(`shapes: ${r.why}`);
     }

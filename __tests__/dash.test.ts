@@ -30,6 +30,11 @@ jest.mock('sn-plugin-lib', () => ({
       mockLasso = false;
       return {success: true, result: true};
     }),
+    deleteLassoElements: jest.fn(async () => {
+      mockCalls.push('lasso delete');
+      mockLasso = false;
+      return {success: true, result: true};
+    }),
     deletePageElements: jest.fn(async (nums: number[]) => {
       mockCalls.push(`delete ${nums.join(',')}`);
       return {success: true, result: true};
@@ -49,9 +54,9 @@ jest.mock('sn-plugin-lib', () => ({
 import {applyDashes} from '../src/effects';
 import {startAction} from '../src/session';
 
-test('dashing a shape: the lasso is let go BEFORE the shape is deleted, then the dashes inserted', async () => {
+test('a lone selected shape is deleted through the lasso (no element number), then the dashes inserted', async () => {
   startAction();
   const res = await applyDashes('dashed');
   expect(res.ok).toBe(true);
-  expect(mockCalls).toEqual(['let go', 'delete 5', 'insert']);
+  expect(mockCalls).toEqual(['lasso delete', 'insert']);
 });
