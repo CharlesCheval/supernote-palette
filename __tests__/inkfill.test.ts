@@ -112,3 +112,36 @@ test('the main fill of one enclosed part is ONE continuous path, its joins insid
   };
   expect(main[0].points.every(inside)).toBe(true);
 });
+
+test('large shape (coarse grid): the ring is still exactly half a line from the ink', () => {
+  const blob = Array.from({length: 1500}, (_, i) => {
+    const t = (2 * Math.PI * i) / 1500;
+    const r = 700 + 90 * Math.sin(3 * t) + 40 * Math.cos(7 * t);
+    return {x: 960 + r * Math.cos(t), y: 1280 + 1.2 * r * Math.sin(t)};
+  });
+  const outline = [...blob, blob[0]];
+  const fill = solidFill([{points: outline, width: 2}], 8, 5)!;
+  // Distance from a point to the outline (brute force, fine for a test).
+  const toOutline = (p: P) => {
+    let best = Infinity;
+    for (let i = 1; i < outline.length; i++) {
+      const a = outline[i - 1];
+      const b = outline[i];
+      const vx = b.x - a.x;
+      const vy = b.y - a.y;
+      const t = Math.max(0, Math.min(1, ((p.x - a.x) * vx + (p.y - a.y) * vy) / (vx * vx + vy * vy)));
+      best = Math.min(best, Math.hypot(p.x - a.x - t * vx, p.y - a.y - t * vy));
+    }
+    return best;
+  };
+  const ring = fill.rings[0];
+  const errs = ring.map(p => Math.abs(toOutline(p) - 5)); // 1 (half the ink) + 4 (half a line)
+  expect(Math.max(...errs)).toBeLessThan(0.75);
+});
+
+test('a star: the fine lines of all its tips are ONE element, beside the main one', () => {
+  const s = star(8, 260, 110);
+  const fill = solidFill([{points: [...s, s[0]], width: 2}], 8, 5)!;
+  expect(fill.paths.filter(p => p.width === 8)).toHaveLength(1);
+  expect(fill.paths.filter(p => p.width === 3)).toHaveLength(1);
+});

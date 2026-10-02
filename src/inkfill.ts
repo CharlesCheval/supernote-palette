@@ -468,14 +468,19 @@ export function solidFill(
   // edge: the inside starts that much short of it, which is made up here.
   const wall = inks.some(k => 'loops' in k) ? 0.75 * cell : 0;
   const r = width / 2 - wall;
+  // The ring is found on the grid, then each of its points is set exactly at
+  // half a line width from the real ink: on a coarse grid (large shapes) it
+  // was only right to a cell, which showed as small white gaps along the edge.
+  const snapper = inkSnapper(inks, width / 2);
   const rings = isolines(g, d, r)
-    .map(l => simplify(l, 0.6))
+    .map(l => simplify(snapper(l), 0.6))
     .filter(l => l.length >= 4);
 
   // Main rows: where the distance to the ink is at least r (inside the ring).
   const core = new Uint8Array(n);
   for (let i = 0; i < n; i++) {
-    core[i] = d[i] >= r ? 1 : 0;
+    // Half a cell in hand: the rows' round ends stay under the ring.
+    core[i] = d[i] >= r + cell / 2 ? 1 : 0;
   }
   const rows = rowsIn(g, core, spacing);
 
@@ -756,6 +761,102 @@ function chain(
     }
   }
   return paths;
+}
+
+/**
+ * Moves points to exactly `dist` px from the surface of the nearest ink (a
+ * centre line's edge, or a contour line), along the line to it. A point whose
+ * move would bring it closer to another ink stays where it is. Segments are
+ * found through a bucket grid, so each point costs a handful of checks.
+ */
+function inkSnapper(inks: Ink[], dist: number): (points: P[]) => P[] {
+  type Seg = {a: P; b: P; half: number};
+  const segs: Seg[] = [];
+  for (const k of inks) {
+    if ('points' in k) {
+      for (let i = 1; i < k.points.length; i++) {
+        segs.push({a: k.points[i - 1], b: k.points[i], half: k.width / 2});
+      }
+    } else {
+      for (const loop of k.loops) {
+        for (let i = 0; i < loop.length; i++) {
+          segs.push({a: loop[i], b: loop[(i + 1) % loop.length], half: 0});
+        }
+      }
+    }
+  }
+  const B = 16;
+  const buckets = new Map<number, number[]>();
+  const bkey = (bx: number, by: number) => bx * 65536 + by;
+  segs.forEach((sg, idx) => {
+    const bx0 = Math.floor(Math.min(sg.a.x, sg.b.x) / B);
+    const bx1 = Math.floor(Math.max(sg.a.x, sg.b.x) / B);
+    const by0 = Math.floor(Math.min(sg.a.y, sg.b.y) / B);
+    const by1 = Math.floor(Math.max(sg.a.y, sg.b.y) / B);
+    for (let bx = bx0; bx <= bx1; bx++) {
+      for (let by = by0; by <= by1; by++) {
+        const k = bkey(bx, by);
+        const list = buckets.get(k);
+        if (list) {
+          list.push(idx);
+        } else {
+          buckets.set(k, [idx]);
+        }
+      }
+    }
+  });
+  const maxHalf = segs.reduce((m, sg) => Math.max(m, sg.half), 0);
+  const reach = Math.ceil((dist + maxHalf + 8) / B);
+  // Nearest ink surface to p: its distance, and the point on the centre line.
+  const nearest = (p: P): {s: number; q: P; half: number} | null => {
+    const bx = Math.floor(p.x / B);
+    const by = Math.floor(p.y / B);
+    let best: {s: number; q: P; half: number} | null = null;
+    for (let dx = -reach; dx <= reach; dx++) {
+      for (let dy = -reach; dy <= reach; dy++) {
+        const list = buckets.get(bkey(bx + dx, by + dy));
+        if (!list) {
+          continue;
+        }
+        for (const idx of list) {
+          const {a, b, half} = segs[idx];
+          const vx = b.x - a.x;
+          const vy = b.y - a.y;
+          const l2 = vx * vx + vy * vy;
+          const t = l2
+            ? Math.max(
+                0,
+                Math.min(1, ((p.x - a.x) * vx + (p.y - a.y) * vy) / l2),
+              )
+            : 0;
+          const q = {x: a.x + t * vx, y: a.y + t * vy};
+          const sd = Math.hypot(p.x - q.x, p.y - q.y) - half;
+          if (!best || sd < best.s) {
+            best = {s: sd, q, half};
+          }
+        }
+      }
+    }
+    return best;
+  };
+  return points =>
+    points.map(p => {
+      const near = nearest(p);
+      if (!near) {
+        return p;
+      }
+      const len = Math.hypot(p.x - near.q.x, p.y - near.q.y);
+      if (len < 1e-6 || Math.abs(near.s - dist) > 2 * B) {
+        return p;
+      }
+      const k = (near.half + dist) / len;
+      const moved = {
+        x: near.q.x + (p.x - near.q.x) * k,
+        y: near.q.y + (p.y - near.q.y) * k,
+      };
+      const check = nearest(moved);
+      return check && check.s < dist - 0.75 ? p : moved;
+    });
 }
 
 /**
