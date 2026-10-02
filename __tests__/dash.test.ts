@@ -44,7 +44,10 @@ jest.mock('sn-plugin-lib', () => ({
       mockCalls.push('insert');
       return {success: true, result: true};
     }),
-    insertGeometry: jest.fn(async () => ({success: true, result: true})),
+    insertGeometry: jest.fn(async () => {
+      mockCalls.push('line');
+      return {success: true, result: true};
+    }),
   },
   PluginNoteAPI: {saveCurrentNote: jest.fn()},
   PluginManager: {getPluginDirPath: jest.fn(async () => '/plugin'), hasPermission: jest.fn(async () => 1)},
@@ -59,4 +62,14 @@ test('a lone selected shape is deleted through the lasso (no element number), th
   const res = await applyDashes('dashed');
   expect(res.ok).toBe(true);
   expect(mockCalls).toEqual(['lasso delete', 'insert']);
+});
+
+test('a solid fill puts the outline back on top: fill first, outline copy, then the original deleted through the lasso', async () => {
+  const {applyFill, FILLS} = require('../src/effects');
+  mockCalls.length = 0;
+  mockLasso = true;
+  startAction();
+  const res = await applyFill(FILLS[1], () => {}, 50);
+  expect(res.ok).toBe(true);
+  expect(mockCalls).toEqual(['line', 'insert', 'lasso delete']); // fill, outline copy on top, original gone
 });
