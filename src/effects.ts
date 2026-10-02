@@ -15,7 +15,7 @@ import {
   visibleRuns,
 } from './patterns';
 import {areaSegments, enclosedArea} from './regions';
-import {Ink, solidFill} from './inkfill';
+import {Ink, hatchFill, solidFill} from './inkfill';
 import {
   ensureWriteAccess,
   errorText,
@@ -415,6 +415,18 @@ async function fills(
         : {ok: true, message: 'Filled.'};
     }
     // Nothing enclosed found this way: the former method below decides.
+  } else {
+    const lines = await hatchLines(targets, fill, size, density);
+    if (lines) {
+      release(all);
+      const inserted = await insertAll(lines);
+      return inserted < lines.length
+        ? {
+            ok: false,
+            message: `Only ${inserted} of ${lines.length} lines could be drawn.`,
+          }
+        : {ok: true, message: 'Hatched.'};
+    }
   }
   // Visible pieces of every selected stroke / shape: a partly erased stroke
   // stays one element with hidden points, and only its visible runs count.
@@ -547,6 +559,63 @@ async function solidLines(
   return area.paths.map(p =>
     geometry(p.points, {...style, penWidth: Math.round(p.width * 100)}),
   );
+}
+
+/**
+ * Hatching kept clear of the outline square to it, on the same grid as solid
+ * fills. Strokes are taken at their full pen width (the hatching must stay off
+ * all of a thick stroke), shapes at their exact width, eraser-cut strokes by
+ * their drawn contour. Null when nothing enclosed is found: the caller falls
+ * back.
+ */
+async function hatchLines(
+  targets: Element[],
+  fill: FillStyle,
+  size: Size | null,
+  density: number,
+): Promise<object[] | null> {
+  if (!('hatch' in fill)) {
+    return null;
+  }
+  const inks: Ink[] = [];
+  let outlineWidth = 0;
+  for (const e of targets) {
+    const o = await outlineOf(e, size);
+    if (!o) {
+      continue;
+    }
+    outlineWidth = Math.max(outlineWidth, o.style.penWidth);
+    if (isStroke(e) && (await eraserCount(e)) > 0) {
+      const loops = await contourOf(e, size);
+      if (loops.length) {
+        inks.push({loops, centre: o.points});
+        continue;
+      }
+    }
+    const runs = isStroke(e)
+      ? visibleRuns(o.points, await drawFlags(e, o.points.length))
+      : [o.points];
+    for (const run of runs) {
+      inks.push({points: run, width: px(o.style.penWidth)});
+    }
+  }
+  const plan = fillPlan(fill, outlineWidth, density);
+  const segments = hatchFill(
+    inks,
+    fill.hatch,
+    plan.spacing,
+    px(plan.width) / 2 + 1,
+    JOIN_GAP,
+  );
+  if (!segments || !segments.length) {
+    return null;
+  }
+  const style: Style = {
+    penType: FINELINER,
+    penColor: fill.color,
+    penWidth: plan.width,
+  };
+  return segments.map(sg => geometry(sg, style));
 }
 
 /** Lines inside one closed outline. */

@@ -1,4 +1,4 @@
-import {P, simplify, solidFill} from '../src/inkfill';
+import {P, hatchFill, simplify, solidFill} from '../src/inkfill';
 import {ellipsePoints} from '../src/patterns';
 
 const dist = (a: P, b: P) => Math.hypot(a.x - b.x, a.y - b.y);
@@ -111,4 +111,34 @@ test('the main fill of one enclosed part is ONE continuous path, its joins insid
     return dist(p, {x: 600, y: 600}) <= 200 + 50 * Math.sin(3 * t) - 4;
   };
   expect(main[0].points.every(inside)).toBe(true);
+});
+
+test('hatching stays clear of a thick outline, square to it, at any angle', () => {
+  const blob = Array.from({length: 600}, (_, i) => {
+    const t = (2 * Math.PI * i) / 600;
+    const r = 300 + 80 * Math.sin(3 * t);
+    return {x: 600 + r * Math.cos(t), y: 600 + r * Math.sin(t)};
+  });
+  const outline = [...blob, blob[0]];
+  const inkWidth = 24; // pen 2.0
+  const hatchHalf = 2.5;
+  const segs = hatchFill([{points: outline, width: inkWidth}], 45, 20, hatchHalf + 1)!;
+  expect(segs.length).toBeGreaterThan(20);
+  const toOutline = (p: P) => {
+    let best = Infinity;
+    for (let i = 1; i < outline.length; i++) {
+      const a = outline[i - 1];
+      const b = outline[i];
+      const vx = b.x - a.x;
+      const vy = b.y - a.y;
+      const t = Math.max(0, Math.min(1, ((p.x - a.x) * vx + (p.y - a.y) * vy) / (vx * vx + vy * vy)));
+      best = Math.min(best, Math.hypot(p.x - a.x - t * vx, p.y - a.y - t * vy));
+    }
+    return best;
+  };
+  // Each end: the line's round end (half its width) stays off the ink (half of 24 px).
+  for (const [a, b] of segs) {
+    expect(toOutline(a)).toBeGreaterThanOrEqual(inkWidth / 2 + hatchHalf - 1.5);
+    expect(toOutline(b)).toBeGreaterThanOrEqual(inkWidth / 2 + hatchHalf - 1.5);
+  }
 });

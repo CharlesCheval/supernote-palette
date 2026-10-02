@@ -424,13 +424,10 @@ const FINE_WIDTH = 3;
  * ends closer than this are taken as joined (shapes made of several strokes).
  * Null when the ink encloses nothing.
  */
-export function solidFill(
-  inks: Ink[],
-  width: number,
-  spacing: number,
-  gap = 0,
-  cellSize?: number,
-): SolidFill | null {
+/** What the ink encloses on a grid, and each inside cell's distance to it. */
+type Field = {g: Grid; inside: Uint8Array; d: Float32Array};
+
+function field(inks: Ink[], gap: number, cellSize?: number): Field | null {
   const all = inks.flatMap(k => ('points' in k ? k.points : k.loops.flat()));
   if (!all.length) {
     return null;
@@ -454,17 +451,99 @@ export function solidFill(
     cols: Math.ceil((xs.max - xs.min + 2 * pad) / cell) + 1,
     rows: Math.ceil((ys.max - ys.min + 2 * pad) / cell) + 1,
   };
-  const n = g.cols * g.rows;
   const ink = drawInk(g, inks);
-
   // A closed outline encloses its inside as drawn (exact, corners included).
   // Only when it does not (ends of several strokes not quite meeting) are the
   // ends joined by `gap`.
   const inside = enclose(g, ink, 0) ?? (gap > 0 ? enclose(g, ink, gap) : null);
-  if (!inside) {
+  return inside ? {g, inside, d: distanceInside(g, inside)} : null;
+}
+
+/**
+ * Hatching: parallel lines `spacing` px apart at `angleDeg`, kept at least
+ * `clearance` px from the ink, measured square to it. The former hatching kept
+ * its distance along each line only, so where the outline ran nearly parallel
+ * to the lines their ends ran onto a thick outline.
+ */
+export function hatchFill(
+  inks: Ink[],
+  angleDeg: number,
+  spacing: number,
+  clearance: number,
+  gap = 0,
+): [P, P][] | null {
+  const f = field(inks, gap);
+  if (!f) {
     return null;
   }
-  const d = distanceInside(g, inside);
+  const {g, d} = f;
+  const a = (angleDeg * Math.PI) / 180;
+  const u = {x: Math.cos(a), y: Math.sin(a)};
+  const nrm = {x: -u.y, y: u.x};
+  const ok = (x: number, y: number) => {
+    const gx = Math.round((x - g.x0) / g.cell);
+    const gy = Math.round((y - g.y0) / g.cell);
+    return (
+      gx >= 0 &&
+      gy >= 0 &&
+      gx < g.cols &&
+      gy < g.rows &&
+      d[gy * g.cols + gx] >= clearance
+    );
+  };
+  // Extent across and along the lines, from the grid's corners.
+  const corners = [
+    {x: g.x0, y: g.y0},
+    {x: g.x0 + g.cols * g.cell, y: g.y0},
+    {x: g.x0, y: g.y0 + g.rows * g.cell},
+    {x: g.x0 + g.cols * g.cell, y: g.y0 + g.rows * g.cell},
+  ];
+  const across = range(corners.map(p => p.x * nrm.x + p.y * nrm.y));
+  const along = range(corners.map(p => p.x * u.x + p.y * u.y));
+  const ds = g.cell / 2;
+  const out: [P, P][] = [];
+  const at = (t: number, c: number): P => ({
+    x: t * u.x + c * nrm.x,
+    y: t * u.y + c * nrm.y,
+  });
+  // Lines on a fixed lattice (multiples of the spacing), centred as before.
+  for (
+    let c = Math.ceil(across.min / spacing) * spacing + spacing / 2;
+    c <= across.max;
+    c += spacing
+  ) {
+    let start: number | null = null;
+    for (let t = along.min; t <= along.max + ds; t += ds) {
+      const p = at(t, c);
+      const on = t <= along.max && ok(p.x, p.y);
+      if (on && start === null) {
+        start = t;
+      } else if (!on && start !== null) {
+        const end = t - ds;
+        if (end - start >= 2 * g.cell) {
+          out.push([at(start, c), at(end, c)]);
+        }
+        start = null;
+      }
+    }
+  }
+  return out;
+}
+
+export function solidFill(
+  inks: Ink[],
+  width: number,
+  spacing: number,
+  gap = 0,
+  cellSize?: number,
+): SolidFill | null {
+  const f = field(inks, gap, cellSize);
+  if (!f) {
+    return null;
+  }
+  const {g, inside, d} = f;
+  const cell = g.cell;
+  const n = g.cols * g.rows;
   // Contour loops are drawn as walls about 1.5 cells thick, centred on the real
   // edge: the inside starts that much short of it, which is made up here.
   const wall = inks.some(k => 'loops' in k) ? 0.75 * cell : 0;
