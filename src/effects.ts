@@ -15,6 +15,7 @@ import {
   visibleRuns,
 } from './patterns';
 import {areaSegments, enclosedArea} from './regions';
+import {Ink, solidFill} from './inkfill';
 import {
   ensureWriteAccess,
   errorText,
@@ -400,6 +401,21 @@ async function fills(
   }
   onReady();
   const size = await pageSize();
+  // Solid fill: up to the real ink of the outline, with a smooth edge.
+  if (!('hatch' in fill)) {
+    const lines = await solidLines(targets, fill, size);
+    if (lines) {
+      release(all);
+      const inserted = await insertAll(lines);
+      return inserted < lines.length
+        ? {
+            ok: false,
+            message: `Only ${inserted} of ${lines.length} lines could be drawn.`,
+          }
+        : {ok: true, message: 'Filled.'};
+    }
+    // Nothing enclosed found this way: the former method below decides.
+  }
   // Visible pieces of every selected stroke / shape: a partly erased stroke
   // stays one element with hidden points, and only its visible runs count.
   const pieces: Outline[] = [];
@@ -466,6 +482,52 @@ async function fills(
     };
   }
   return {ok: true, message: 'Filled.'};
+}
+
+/** Fill lines: ≈ 0.7 mm, 5 px apart, always drawn with the fineliner (uniform). */
+const SOLID_WIDTH = 8;
+const SOLID_SPACING = 5;
+const FINELINER = 10;
+
+/**
+ * A solid fill as one ring along the inner edge of the ink plus straight rows
+ * (see inkfill.ts). Strokes are taken as drawn (their ink contour, pressure
+ * included) when the SDK gives it; shapes by their outline and exact width.
+ * Null when nothing enclosed is found: the caller falls back.
+ */
+async function solidLines(
+  targets: Element[],
+  fill: FillStyle,
+  size: Size | null,
+): Promise<object[] | null> {
+  const inks: Ink[] = [];
+  for (const e of targets) {
+    const o = await outlineOf(e, size);
+    if (isStroke(e)) {
+      const loops = await contourOf(e, size);
+      if (loops.length && o) {
+        const runs = visibleRuns(o.points, await drawFlags(e, o.points.length));
+        inks.push({loops, centre: runs.flat()});
+        continue;
+      }
+    }
+    if (o) {
+      inks.push({points: o.points, width: px(o.style.penWidth)});
+    }
+  }
+  const area = solidFill(inks, SOLID_WIDTH, SOLID_SPACING, JOIN_GAP);
+  if (!area) {
+    return null;
+  }
+  const style: Style = {
+    penType: FINELINER,
+    penColor: fill.color,
+    penWidth: SOLID_WIDTH * 100,
+  };
+  return [
+    ...area.rings.map(r => geometry(r, style)),
+    ...chainRows(area.rows).map(c => geometry(c, style)),
+  ];
 }
 
 /** Lines inside one closed outline. */

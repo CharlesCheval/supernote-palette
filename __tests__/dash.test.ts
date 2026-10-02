@@ -71,5 +71,6 @@ test('a solid fill never re-inserts or deletes the outline: only the fill lines 
   startAction();
   const res = await applyFill(FILLS[1], () => {}, 50);
   expect(res.ok).toBe(true);
-  expect(mockCalls).toEqual(['line']);
+  // Ring and rows inserted together, in one batch; the outline is not touched.
+  expect(mockCalls).toEqual(['insert']);
 });
