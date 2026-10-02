@@ -77,66 +77,69 @@ function stampLine(
 /** Breadth-first flood through cells where `open` holds (4-neighbours). */
 function flood(
   g: Grid,
-  open: (i: number) => boolean,
-  seeds: Iterable<number>,
+  open: Uint8Array,
+  seeds: ArrayLike<number>,
   maxSteps = Infinity,
   diagonals = false,
 ): Int32Array {
-  const n = g.cols * g.rows;
+  // Plain loops over typed arrays, no callbacks: this runs over up to a
+  // million cells on the device's interpreter (no JIT).
+  const {cols, rows} = g;
+  const n = cols * rows;
   const dist = new Int32Array(n).fill(-1);
   const queue = new Int32Array(n);
   let head = 0;
   let tail = 0;
-  for (const s of seeds) {
-    if (dist[s] < 0 && open(s)) {
-      dist[s] = 0;
-      queue[tail++] = s;
+  for (let k = 0; k < seeds.length; k++) {
+    const s0 = seeds[k];
+    if (dist[s0] < 0 && open[s0]) {
+      dist[s0] = 0;
+      queue[tail++] = s0;
     }
   }
   while (head < tail) {
     const i = queue[head++];
-    if (dist[i] >= maxSteps) {
+    const next = dist[i] + 1;
+    if (next > maxSteps) {
       continue;
     }
-    const x = i % g.cols;
-    if (x > 0 && dist[i - 1] < 0 && open(i - 1)) {
-      dist[i - 1] = dist[i] + 1;
+    const x = i % cols;
+    const up = i >= cols;
+    const down = i + cols < n;
+    const left = x > 0;
+    const right = x < cols - 1;
+    if (left && dist[i - 1] < 0 && open[i - 1]) {
+      dist[i - 1] = next;
       queue[tail++] = i - 1;
     }
-    if (x < g.cols - 1 && dist[i + 1] < 0 && open(i + 1)) {
-      dist[i + 1] = dist[i] + 1;
+    if (right && dist[i + 1] < 0 && open[i + 1]) {
+      dist[i + 1] = next;
       queue[tail++] = i + 1;
     }
-    if (i >= g.cols && dist[i - g.cols] < 0 && open(i - g.cols)) {
-      dist[i - g.cols] = dist[i] + 1;
-      queue[tail++] = i - g.cols;
+    if (up && dist[i - cols] < 0 && open[i - cols]) {
+      dist[i - cols] = next;
+      queue[tail++] = i - cols;
     }
-    if (i + g.cols < n && dist[i + g.cols] < 0 && open(i + g.cols)) {
-      dist[i + g.cols] = dist[i] + 1;
-      queue[tail++] = i + g.cols;
+    if (down && dist[i + cols] < 0 && open[i + cols]) {
+      dist[i + cols] = next;
+      queue[tail++] = i + cols;
     }
     if (diagonals) {
-      const y = (i - x) / g.cols;
-      for (const [dx, dy] of [
-        [-1, -1],
-        [1, -1],
-        [-1, 1],
-        [1, 1],
-      ]) {
-        const nx = x + dx;
-        const ny = y + dy;
-        const j = ny * g.cols + nx;
-        if (
-          nx >= 0 &&
-          ny >= 0 &&
-          nx < g.cols &&
-          ny < g.rows &&
-          dist[j] < 0 &&
-          open(j)
-        ) {
-          dist[j] = dist[i] + 1;
-          queue[tail++] = j;
-        }
+      if (up && left && dist[i - cols - 1] < 0 && open[i - cols - 1]) {
+        dist[i - cols - 1] = next;
+        queue[tail++] = i - cols - 1;
+      }
+      if (up && right && dist[i - cols + 1] < 0 && open[i - cols + 1]) {
+        dist[i - cols + 1] = next;
+        queue[tail++] = i - cols + 1;
+      }
+      if (down && left && dist[i + cols - 1] < 0 && open[i + cols - 1]) {
+        dist[i + cols - 1] = next;
+        queue[tail++] = i + cols - 1;
+      }
+      if (down && right && dist[i + cols + 1] < 0 && open[i + cols + 1]) {
+        dist[i + cols + 1] = next;
+        queue[tail++] = i + cols + 1;
       }
     }
   }
@@ -166,7 +169,11 @@ function drawInk(g: Grid, inks: Ink[]): Uint8Array {
         seeds.push(gy * g.cols + gx);
       }
     }
-    const body = flood(g, i => !walls[i], seeds);
+    const open = new Uint8Array(n);
+    for (let i = 0; i < n; i++) {
+      open[i] = walls[i] ? 0 : 1;
+    }
+    const body = flood(g, open, seeds);
     for (let i = 0; i < n; i++) {
       if (walls[i] || body[i] >= 0) {
         ink[i] = 1;
@@ -176,48 +183,82 @@ function drawInk(g: Grid, inks: Ink[]): Uint8Array {
   return ink;
 }
 
+/**
+ * Chamfer distance (1, √2), in cells, from the cells where `seed` is set, for
+ * the cells where `within` is set (others stay far). Two passes of plain loops;
+ * the grid's padding keeps every cell considered off its border.
+ */
+function chamfer(g: Grid, seed: Uint8Array, within: Uint8Array): Float32Array {
+  const {cols, rows} = g;
+  const BIG = 1e9;
+  const d = new Float32Array(cols * rows);
+  for (let i = 0; i < d.length; i++) {
+    d[i] = seed[i] ? 0 : BIG;
+  }
+  for (let y = 1; y < rows - 1; y++) {
+    for (let x = 1, i = y * cols + 1; x < cols - 1; x++, i++) {
+      if (!within[i] || d[i] === 0) {
+        continue;
+      }
+      let v = d[i];
+      let c = d[i - 1] + 1;
+      if (c < v) {
+        v = c;
+      }
+      c = d[i - cols] + 1;
+      if (c < v) {
+        v = c;
+      }
+      c = d[i - cols - 1] + SQRT2;
+      if (c < v) {
+        v = c;
+      }
+      c = d[i - cols + 1] + SQRT2;
+      if (c < v) {
+        v = c;
+      }
+      d[i] = v;
+    }
+  }
+  for (let y = rows - 2; y >= 1; y--) {
+    for (let x = cols - 2, i = y * cols + cols - 2; x >= 1; x--, i--) {
+      if (!within[i] || d[i] === 0) {
+        continue;
+      }
+      let v = d[i];
+      let c = d[i + 1] + 1;
+      if (c < v) {
+        v = c;
+      }
+      c = d[i + cols] + 1;
+      if (c < v) {
+        v = c;
+      }
+      c = d[i + cols + 1] + SQRT2;
+      if (c < v) {
+        v = c;
+      }
+      c = d[i + cols - 1] + SQRT2;
+      if (c < v) {
+        v = c;
+      }
+      d[i] = v;
+    }
+  }
+  return d;
+}
+
 /** Distance (px) from each inside cell to the nearest cell that is not inside. */
 function distanceInside(g: Grid, inside: Uint8Array): Float32Array {
-  const {cols, rows} = g;
-  const d = new Float32Array(cols * rows);
-  const BIG = 1e9;
-  for (let i = 0; i < d.length; i++) {
-    d[i] = inside[i] ? BIG : 0;
+  const n = g.cols * g.rows;
+  const outside = new Uint8Array(n);
+  for (let i = 0; i < n; i++) {
+    outside[i] = inside[i] ? 0 : 1;
   }
-  const at = (x: number, y: number) =>
-    x < 0 || y < 0 || x >= cols || y >= rows ? 0 : d[y * cols + x];
-  // Two-pass chamfer (1, √2): within a few percent of the true distance.
-  for (let y = 0; y < rows; y++) {
-    for (let x = 0; x < cols; x++) {
-      const i = y * cols + x;
-      if (d[i]) {
-        d[i] = Math.min(
-          d[i],
-          at(x - 1, y) + 1,
-          at(x, y - 1) + 1,
-          at(x - 1, y - 1) + SQRT2,
-          at(x + 1, y - 1) + SQRT2,
-        );
-      }
-    }
-  }
-  for (let y = rows - 1; y >= 0; y--) {
-    for (let x = cols - 1; x >= 0; x--) {
-      const i = y * cols + x;
-      if (d[i]) {
-        d[i] = Math.min(
-          d[i],
-          at(x + 1, y) + 1,
-          at(x, y + 1) + 1,
-          at(x + 1, y + 1) + SQRT2,
-          at(x - 1, y + 1) + SQRT2,
-        );
-      }
-    }
-  }
+  const d = chamfer(g, outside, inside);
   // Cell distances to cell centres; the edge lies half a cell beyond.
-  for (let i = 0; i < d.length; i++) {
-    d[i] = d[i] ? (d[i] - 0.5) * g.cell : 0;
+  for (let i = 0; i < n; i++) {
+    d[i] = inside[i] ? (d[i] - 0.5) * g.cell : 0;
   }
   return d;
 }
@@ -226,7 +267,9 @@ function distanceInside(g: Grid, inside: Uint8Array): Float32Array {
 function isolines(g: Grid, f: Float32Array, level: number): P[][] {
   const {cols, rows, cell, x0, y0} = g;
   const v = (x: number, y: number) => f[y * cols + x] - level;
-  const key = (p: P) => `${Math.round(p.x * 8)},${Math.round(p.y * 8)}`;
+  // Numeric keys (1/8 px), cheaper than strings on the device.
+  const key = (p: P) =>
+    Math.round((p.x - x0) * 8) * 1048576 + Math.round((p.y - y0) * 8);
   const point = (xa: number, ya: number, xb: number, yb: number): P => {
     const a = v(xa, ya);
     const b = v(xb, yb);
@@ -237,7 +280,7 @@ function isolines(g: Grid, f: Float32Array, level: number): P[][] {
     };
   };
   // Segments of every grid square, then chained into loops.
-  const next = new Map<string, P[]>();
+  const next = new Map<number, P[]>();
   const add = (a: P, b: P) => {
     const ka = key(a);
     const kb = key(b);
@@ -294,26 +337,26 @@ function isolines(g: Grid, f: Float32Array, level: number): P[][] {
       }
     }
   }
-  const points = new Map<string, P>();
+  const points = new Map<number, P>();
   for (const ns of next.values()) {
     for (const p of ns) {
       points.set(key(p), p);
     }
   }
-  const used = new Set<string>();
+  const used = new Set<number>();
   const loops: P[][] = [];
   for (const start of next.keys()) {
     if (used.has(start)) {
       continue;
     }
     const loop: P[] = [];
-    let cur: string | undefined = start;
-    let prev: string | undefined;
+    let cur: number | undefined = start;
+    let prev: number | undefined;
     while (cur && !used.has(cur)) {
       used.add(cur);
       loop.push(points.get(cur)!);
-      const options: string[] = (next.get(cur) ?? []).map(key);
-      const nxt: string | undefined = options.find(
+      const options: number[] = (next.get(cur) ?? []).map(key);
+      const nxt: number | undefined = options.find(
         o => o !== prev && !used.has(o),
       );
       prev = cur;
@@ -386,7 +429,7 @@ export function solidFill(
   width: number,
   spacing: number,
   gap = 0,
-  cell = 2,
+  cellSize?: number,
 ): SolidFill | null {
   const all = inks.flatMap(k => ('points' in k ? k.points : k.loops.flat()));
   if (!all.length) {
@@ -394,6 +437,14 @@ export function solidFill(
   }
   const xs = range(all.map(p => p.x));
   const ys = range(all.map(p => p.y));
+  // Cells of 2 px for small shapes, up to 4 px for a whole page: the work
+  // grows with the number of cells, about 250 000 at most.
+  const cell =
+    cellSize ??
+    Math.max(
+      2,
+      Math.min(4, Math.sqrt(((xs.max - xs.min) * (ys.max - ys.min)) / 250000)),
+    );
   const pad = gap + 4 * cell + 2;
   const g: Grid = {
     x0: xs.min - pad,
@@ -431,11 +482,11 @@ export function solidFill(
   // Fine pass: inside cells the main lines do not reach — farther than r (plus
   // a cell) from the core, along whose edge the ring runs — i.e. tips narrower
   // than a main line. Not the band along the edge, which the ring covers.
-  const reach = flood(g, i => inside[i] === 1, coreCells(core), Infinity, true);
+  const reach = chamfer(g, core, inside);
   const left = new Uint8Array(n);
   let leftCount = 0;
   for (let i = 0; i < n; i++) {
-    if (inside[i] && !core[i] && (reach[i] < 0 || reach[i] * cell > r + cell)) {
+    if (inside[i] && !core[i] && reach[i] * cell > r + cell) {
       left[i] = 1;
       leftCount++;
     }
@@ -460,44 +511,41 @@ export function solidFill(
   return paths.length ? {rings, rows, fineRows, paths} : null;
 }
 
-function coreCells(mask: Uint8Array): number[] {
-  const out: number[] = [];
-  for (let i = 0; i < mask.length; i++) {
-    if (mask[i]) {
-      out.push(i);
-    }
-  }
-  return out;
-}
-
 /** Horizontal segments `spacing` px apart through the cells of a mask. */
 function rowsIn(g: Grid, mask: Uint8Array, spacing: number): [P, P][] {
-  let top = Infinity;
-  let bottom = -Infinity;
-  for (let i = 0; i < mask.length; i++) {
-    if (mask[i]) {
-      const y = g.y0 + Math.floor(i / g.cols) * g.cell;
-      top = Math.min(top, y);
-      bottom = Math.max(bottom, y);
+  const {cols, rows: nRows, cell} = g;
+  let first = -1;
+  let last = -1;
+  for (let gy = 0; gy < nRows; gy++) {
+    for (let i = gy * cols, end = i + cols; i < end; i++) {
+      if (mask[i]) {
+        if (first < 0) {
+          first = gy;
+        }
+        last = gy;
+        break;
+      }
     }
   }
   const rows: [P, P][] = [];
-  if (top > bottom) {
+  if (first < 0) {
     return rows;
   }
-  const span = bottom - top;
+  const top = g.y0 + first * cell;
+  const span = (last - first) * cell;
   const step =
     span > 0 ? span / Math.max(1, Math.ceil(span / spacing)) : spacing;
-  for (let y = top; y <= bottom + 1e-9; y += step) {
-    const gy = Math.round((y - g.y0) / g.cell);
+  for (let y = top; y <= top + span + 1e-9; y += step) {
+    const gy = Math.round((y - g.y0) / cell);
+    const base = gy * cols;
     let start = -1;
-    for (let gx = 0; gx <= g.cols; gx++) {
-      const on = gx < g.cols && mask[gy * g.cols + gx] === 1;
+    for (let gx = 0; gx <= cols; gx++) {
+      const on = gx < cols && mask[base + gx] === 1;
       if (on && start < 0) {
         start = gx;
       } else if (!on && start >= 0) {
-        const xa = g.x0 + start * g.cell;
-        const xb = g.x0 + (gx - 1) * g.cell;
+        const xa = g.x0 + start * cell;
+        const xb = g.x0 + (gx - 1) * cell;
         rows.push([
           {x: xa, y},
           {x: Math.max(xa + 0.5, xb), y},
@@ -584,55 +632,67 @@ function chain(
     return true;
   };
   // Shortest way through `way` cells (8-neighbours), as points, or null.
+  // Searched first in a window around both ends (cheap), then everywhere.
+  const routeIn = (from: number, to: number, margin: number): P[] | null => {
+    const fx = from % g.cols;
+    const fy = (from - fx) / g.cols;
+    const tx = to % g.cols;
+    const ty = (to - tx) / g.cols;
+    const x0 = Math.max(0, Math.min(fx, tx) - margin);
+    const y0 = Math.max(0, Math.min(fy, ty) - margin);
+    const x1 = Math.min(g.cols - 1, Math.max(fx, tx) + margin);
+    const y1 = Math.min(g.rows - 1, Math.max(fy, ty) + margin);
+    const w = x1 - x0 + 1;
+    const h = y1 - y0 + 1;
+    const prev = new Int32Array(w * h).fill(-1);
+    const queue = new Int32Array(w * h);
+    const local = (c: number) =>
+      ((c - (c % g.cols)) / g.cols - y0) * w + ((c % g.cols) - x0);
+    const lf = local(from);
+    const lt = local(to);
+    let head = 0;
+    let tail = 0;
+    prev[lf] = lf;
+    queue[tail++] = lf;
+    while (head < tail && prev[lt] < 0) {
+      const i = queue[head++];
+      const x = i % w;
+      const y = (i - x) / w;
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const nx = x + dx;
+          const ny = y + dy;
+          if ((dx || dy) && nx >= 0 && ny >= 0 && nx < w && ny < h) {
+            const j = ny * w + nx;
+            if (prev[j] < 0 && way[(ny + y0) * g.cols + nx + x0]) {
+              prev[j] = i;
+              queue[tail++] = j;
+            }
+          }
+        }
+      }
+    }
+    if (prev[lt] < 0) {
+      return null;
+    }
+    const cells: number[] = [];
+    for (let c = lt; c !== lf; c = prev[c]) {
+      cells.push(c);
+    }
+    cells.push(lf);
+    const pts = cells.reverse().map(c => ({
+      x: g.x0 + ((c % w) + x0) * g.cell,
+      y: g.y0 + (Math.floor(c / w) + y0) * g.cell,
+    }));
+    return simplify(pts, 0.5);
+  };
   const route = (a: P, b: P): P[] | null => {
     const from = snap(a);
     const to = snap(b);
     if (from < 0 || to < 0) {
       return null;
     }
-    const prev = new Int32Array(way.length).fill(-1);
-    const queue = new Int32Array(way.length);
-    let head = 0;
-    let tail = 0;
-    prev[from] = from;
-    queue[tail++] = from;
-    while (head < tail && prev[to] < 0) {
-      const i = queue[head++];
-      const x = i % g.cols;
-      const y = (i - x) / g.cols;
-      for (let dy = -1; dy <= 1; dy++) {
-        for (let dx = -1; dx <= 1; dx++) {
-          const nx = x + dx;
-          const ny = y + dy;
-          const j = ny * g.cols + nx;
-          if (
-            (dx || dy) &&
-            nx >= 0 &&
-            ny >= 0 &&
-            nx < g.cols &&
-            ny < g.rows &&
-            way[j] &&
-            prev[j] < 0
-          ) {
-            prev[j] = i;
-            queue[tail++] = j;
-          }
-        }
-      }
-    }
-    if (prev[to] < 0) {
-      return null;
-    }
-    const cells: number[] = [];
-    for (let c = to; c !== from; c = prev[c]) {
-      cells.push(c);
-    }
-    cells.push(from);
-    const pts = cells.reverse().map(c => ({
-      x: g.x0 + (c % g.cols) * g.cell,
-      y: g.y0 + Math.floor(c / g.cols) * g.cell,
-    }));
-    return simplify(pts, 0.5);
+    return routeIn(from, to, 30) ?? routeIn(from, to, Math.max(g.cols, g.rows));
   };
 
   const paths: P[][] = [];
@@ -707,12 +767,24 @@ function chain(
  */
 function enclose(g: Grid, ink: Uint8Array, gap: number): Uint8Array | null {
   const n = g.cols * g.rows;
-  const nearInk =
-    gap > 0
-      ? flood(g, () => true, inkCells(ink), Math.ceil(gap / g.cell))
-      : null;
-  const blocked = (i: number) =>
-    ink[i] === 1 || (nearInk !== null && nearInk[i] >= 0);
+  const blocked = new Uint8Array(n);
+  if (gap > 0) {
+    const near = flood(
+      g,
+      new Uint8Array(n).fill(1),
+      inkCells(ink),
+      Math.ceil(gap / g.cell),
+    );
+    for (let i = 0; i < n; i++) {
+      blocked[i] = ink[i] || near[i] >= 0 ? 1 : 0;
+    }
+  } else {
+    blocked.set(ink);
+  }
+  const open = new Uint8Array(n);
+  for (let i = 0; i < n; i++) {
+    open[i] = blocked[i] ? 0 : 1;
+  }
   const border: number[] = [];
   for (let x = 0; x < g.cols; x++) {
     border.push(x, (g.rows - 1) * g.cols + x);
@@ -720,30 +792,30 @@ function enclose(g: Grid, ink: Uint8Array, gap: number): Uint8Array | null {
   for (let y = 0; y < g.rows; y++) {
     border.push(y * g.cols, y * g.cols + g.cols - 1);
   }
-  const outside = flood(g, i => !blocked(i), border);
-  const core: number[] = [];
+  const outside = flood(g, open, border);
+  const inside = new Uint8Array(n);
+  let any = false;
   for (let i = 0; i < n; i++) {
-    if (!blocked(i) && outside[i] < 0) {
-      core.push(i);
+    if (open[i] && outside[i] < 0) {
+      inside[i] = 1;
+      any = true;
     }
   }
-  if (!core.length) {
+  if (!any) {
     return null;
   }
-  const inside = new Uint8Array(n);
   if (gap === 0) {
-    for (const i of core) {
-      inside[i] = 1;
-    }
     return inside;
   }
-  const grown = flood(
-    g,
-    i => !ink[i] && outside[i] < 0,
-    core,
-    Math.ceil(gap / g.cell) + 1,
-    true,
-  );
+  // Grow the enclosed core back to the real ink, diagonals included (or it
+  // could not reach into corners), no further than the gap: never out
+  // through an opening.
+  const way = new Uint8Array(n);
+  for (let i = 0; i < n; i++) {
+    way[i] = !ink[i] && outside[i] < 0 ? 1 : 0;
+  }
+  const core = inkCells(inside);
+  const grown = flood(g, way, core, Math.ceil(gap / g.cell) + 1, true);
   for (let i = 0; i < n; i++) {
     inside[i] = grown[i] >= 0 ? 1 : 0;
   }

@@ -117,8 +117,12 @@ function FillIcon({fill}: {fill: FillStyle}) {
   );
 }
 
-/** An action never keeps the panel busy forever: after this, it is reported as failed. */
-const ACTION_TIMEOUT_MS = 30000;
+/**
+ * An action never keeps the panel busy forever: after this, it is reported as
+ * failed. Generous: a large fill takes seconds on the device, and a shorter
+ * limit reported an error while the work went on and succeeded.
+ */
+const ACTION_TIMEOUT_MS = 120000;
 /** How long an error bubble stays. */
 const TOAST_MS = 4000;
 
