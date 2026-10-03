@@ -86,18 +86,18 @@ const pdf = () =>
     result: '/Document/a.PDF',
   }));
 
-test('in a PDF, a shape read outside its lasso (the lasso Snap leaves) is refused, nothing touched', async () => {
+test('in a PDF, dashes are refused before anything is touched (deleted elements come back there)', async () => {
   mockCalls.length = 0;
   mockLasso = true;
-  pdf(); // lasso rect 0–10, the shape read at 0–400
+  pdf();
   startAction();
   const res = await applyDashes('dashed');
   expect(res.ok).toBe(false);
-  expect(res.message).toMatch(/select the shape again/);
+  expect(res.message).toMatch(/PDF/);
   expect(mockCalls).toEqual([]);
 });
 
-test('in a PDF, a shape lassoed by hand: deleted through the lasso FIRST (inserting lets it go), then dashed', async () => {
+test('in a PDF, a restyle that would delete is refused, nothing touched', async () => {
   mockCalls.length = 0;
   mockLasso = true;
   pdf();
@@ -107,36 +107,10 @@ test('in a PDF, a shape lassoed by hand: deleted through the lasso FIRST (insert
     success: true,
     result: {imagePath: '', rect: r, rotateDegree: 0},
   }));
-  startAction();
-  const res = await applyDashes('dashed');
-  expect(res.ok).toBe(true);
-  expect(mockCalls).toEqual(['lasso delete', 'insert']);
-});
-
-test('in a PDF, a restyle deletes through the lasso first, then draws FRESH geometries (never the read elements)', async () => {
-  mockCalls.length = 0;
-  mockLasso = true;
-  pdf();
-  const inserted: any[] = [];
   (PluginCommAPI as any).getLassoGeometries = jest.fn(async () => ({success: false, error: {message: 'none', code: 905}}));
   (PluginCommAPI as any).getPenInfo = jest.fn(async () => ({success: true, result: {width: 300}}));
-  (PluginCommAPI.createElement as jest.Mock).mockImplementation(async () => ({success: true, result: {uuid: 'new'}}));
-  (PluginCommAPI.insertPageElements as jest.Mock).mockImplementation(async (els: any[]) => {
-    mockCalls.push('insert');
-    inserted.push(...els);
-    return {success: true, result: true};
-  });
-  (PluginCommAPI.insertGeometry as jest.Mock).mockImplementation(async (g: any) => {
-    mockCalls.push('line');
-    inserted.push({geometry: g, uuid: 'new'});
-    return {success: true, result: true};
-  });
   startAction();
   const res = await applyStyleEverywhere({width: 500});
-  expect(res.ok).toBe(true);
-  expect(mockCalls[0]).toBe('lasso delete');
-  expect(inserted.length).toBe(1);
-  expect(inserted[0].uuid).toBe('new');
-  expect(inserted[0].geometry.penWidth).toBe(500);
-  expect(inserted[0].geometry.points.length).toBe(5);
+  expect(res.ok).toBe(false);
+  expect(mockCalls).toEqual([]);
 });

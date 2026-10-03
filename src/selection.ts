@@ -708,7 +708,7 @@ export async function isPdf(): Promise<boolean> {
 }
 
 export const PDF_LIMIT =
-  'In a PDF, width and colour can only be changed on a single shape: other changes are not reliable there.';
+  'In a PDF, only fills, hatching and the width or colour of a single shape are available: elements deleted in a PDF come back later, so nothing is deleted there.';
 
 /**
  * PDFs (measured, test.45–46): right after Snap draws a shape, its lasso reads

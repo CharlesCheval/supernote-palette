@@ -18,7 +18,6 @@ import {
   ensureWriteAccess,
   errorText,
   PDF_LIMIT,
-  PdfRestyle,
   applyStyle,
   isPdf,
   isShape,
@@ -245,9 +244,6 @@ async function dashElements(
   if (!lassoHoldsExactly && !(await releaseLasso())) {
     return {done: 0, why: 'the selection could not be let go: nothing changed'};
   }
-  if (lassoHoldsExactly && (await isPdf())) {
-    return dashInPdf(elements, pieces, page);
-  }
   const done = await insertAll(pieces);
   trace(`dashes drawn: ${done}/${pieces.length}`);
   if (done < pieces.length) {
@@ -259,8 +255,8 @@ async function dashElements(
   let deleted: any = lassoHoldsExactly
     ? await PluginCommAPI.deleteLassoElements()
     : await PluginCommAPI.deletePageElements(nums, page);
-  if (lassoHoldsExactly && !ok<boolean>(deleted) && !(await isPdf())) {
-    // In a PDF the lasso can be gone after the insertion: delete by number
+  if (lassoHoldsExactly && !ok<boolean>(deleted)) {
+    // The lasso can be gone after the insertion: delete by number
     // (the dashes were appended, the originals keep their numbers).
     trace(`lasso delete: ${errorText(deleted)} → by number`);
     deleted = await PluginCommAPI.deletePageElements(nums, page);
@@ -278,178 +274,11 @@ async function dashElements(
       };
 }
 
-/**
- * PDFs (measured, test.47): inserting lets the lasso go ("No lasso action has
- * been performed", code 904), so the originals can no longer be deleted
- * through it, and deleting by number is unreliable there. The originals are
- * deleted through the lasso FIRST, then the dashes are inserted; if they
- * cannot all be, the originals are put back.
- */
-async function dashInPdf(
-  elements: Element[],
-  pieces: object[],
-  page: number,
-): Promise<{done: number; why?: string}> {
-  const backup = await rebuilt(elements, await pageSize());
-  if (!backup) {
-    return {done: 0, why: 'could not read the selection: nothing changed'};
-  }
-  const deleted: any = await PluginCommAPI.deleteLassoElements();
-  trace(
-    `PDF: originals deleted first: ${
-      ok<boolean>(deleted) ? 'ok' : errorText(deleted)
-    }`,
-  );
-  if (!ok<boolean>(deleted)) {
-    return {
-      done: 0,
-      why: `the originals could not be deleted: nothing changed (${errorText(
-        deleted,
-      )})`,
-    };
-  }
-  const done = await insertAll(pieces);
-  trace(`dashes drawn: ${done}/${pieces.length}`);
-  if (done === pieces.length) {
-    return {done: elements.length};
-  }
-  const back = await insertAll(backup);
-  trace(`originals put back: ${back}/${backup.length}`);
-  return {
-    done: 0,
-    why: `only ${done} of ${pieces.length} dashes could be drawn; ${
-      back === backup.length
-        ? 'the originals were put back'
-        : 'the originals could not all be put back'
-    } (page ${page})`,
-  };
-}
-
-/**
- * Fresh geometries that look like the elements (page pixels), restyled if a
- * change is given. Never the read elements themselves: inserting those again
- * in a PDF (test.48) brought back stale copies later, elsewhere on the page
- * (a small dashed circle after a move), and hidden elements under shapes.
- * Strokes become fineliner lines along their visible runs (as dashes do).
- */
-async function rebuilt(
-  elements: Element[],
-  size: Size | null,
-  change?: StyleChange,
-): Promise<object[] | null> {
-  const out: object[] = [];
-  for (const e of elements) {
-    const o = await outlineOf(e, size);
-    if (!o) {
-      return null;
-    }
-    const style: Style = !change
-      ? o.style
-      : 'width' in change
-      ? {...o.style, penWidth: change.width}
-      : {...o.style, penColor: change.color};
-    const g = e.geometry;
-    if (
-      isShape(e) &&
-      g &&
-      (g.type === 'GEO_circle' || g.type === 'GEO_ellipse') &&
-      g.ellipseCenterPoint
-    ) {
-      // Read from the page, the radius fields hold twice the radius.
-      out.push({
-        ...geometry([], style),
-        type: g.type,
-        points: [],
-        ellipseCenterPoint: {
-          x: Math.round(g.ellipseCenterPoint.x),
-          y: Math.round(g.ellipseCenterPoint.y),
-        },
-        ellipseMajorAxisRadius: Math.round(g.ellipseMajorAxisRadius / 2),
-        ellipseMinorAxisRadius: Math.round(g.ellipseMinorAxisRadius / 2),
-        ellipseAngle: g.ellipseAngle,
-      });
-    } else if (isShape(e)) {
-      out.push(geometry(o.points, style));
-    } else {
-      for (const run of visibleRuns(
-        o.points,
-        await drawFlags(e, o.points.length),
-      )) {
-        out.push(geometry(run, {...style, penType: FINELINER}));
-      }
-    }
-  }
-  return out;
-}
-
-/**
- * PDFs: modifyPageElements changes nothing there (measured). The selection is
- * replaced: deleted through the lasso first (inserting lets the lasso go,
- * measured), then drawn again restyled, as fresh geometries; if that fails,
- * it is drawn again as it was.
- */
-const restyleInPdf: PdfRestyle = async (change, prep) => {
-  const {elements, error} = await lassoElements();
-  if (error) {
-    return {ok: false, message: error};
-  }
-  const targets = elements.filter(e => isStroke(e) || isShape(e));
-  if (prep.extras || !targets.length || targets.length !== elements.length) {
-    return {ok: false, message: PDF_LIMIT};
-  }
-  if (!(await ensureWriteAccess())) {
-    return {
-      ok: false,
-      message:
-        'File access denied: allow it ("Always allow") to change the selection.',
-    };
-  }
-  const size = await pageSize();
-  const fresh = await rebuilt(targets, size, change);
-  const backup = await rebuilt(targets, size);
-  if (!fresh || !backup) {
-    return {
-      ok: false,
-      message: 'Could not read the selection: nothing changed.',
-    };
-  }
-  if (!actionLive()) {
-    return ABANDONED;
-  }
-  const deleted: any = await PluginCommAPI.deleteLassoElements();
-  trace(
-    `PDF: deleted first: ${ok<boolean>(deleted) ? 'ok' : errorText(deleted)}`,
-  );
-  if (!ok<boolean>(deleted)) {
-    return {
-      ok: false,
-      message: `Not changed: the selection could not be replaced (${errorText(
-        deleted,
-      )}).`,
-    };
-  }
-  const done = await insertAll(fresh);
-  trace(`PDF: drawn restyled: ${done}/${fresh.length}`);
-  if (done === fresh.length) {
-    return {ok: true, message: `${targets.length} elements updated.`};
-  }
-  const back = await insertAll(backup);
-  trace(`PDF: put back: ${back}/${backup.length}`);
-  return {
-    ok: false,
-    message: `Not changed: ${
-      back === backup.length
-        ? 'the selection was drawn again as it was'
-        : 'the selection could NOT all be drawn again'
-    }.`,
-  };
-};
-
-/** Width or colour of the selection, PDFs included. */
+/** Width or colour of the selection. */
 export const applyStyleEverywhere = (
   change: StyleChange,
   onReady: OnReady = () => {},
-) => applyStyle(change, onReady, restyleInPdf);
+) => applyStyle(change, onReady);
 
 /** Makes every selected stroke and shape dashed. */
 export const applyDashes = (
@@ -462,6 +291,11 @@ async function dashes(
   onReady: OnReady = () => {},
 ): Promise<Result> {
   traceStart(`Dash ${dash}`);
+  if (await isPdf()) {
+    // Measured (test.47–49): elements deleted in a PDF come back later, at
+    // random places and moments. Dashes delete the originals: not in a PDF.
+    return {ok: false, message: PDF_LIMIT};
+  }
   const {all, targets, error} = await selection();
   if (error || !targets.length) {
     release(all);
@@ -483,15 +317,6 @@ async function dashes(
   const problems: string[] = [];
   // Only strokes and shapes selected, nothing else: they go through the lasso.
   const exactly = !releaseAfter && all.length === targets.length;
-  if (!exactly && (await isPdf())) {
-    // In a PDF only the lasso deletes reliably (by number: measured unreliable).
-    release(all);
-    return {
-      ok: false,
-      message:
-        'In a PDF, dashes need a selection holding only strokes and shapes: select them again without anything else.',
-    };
-  }
   const r = await dashElements(targets, dash, size, exactly);
   if (r.why) {
     problems.push(r.why);
