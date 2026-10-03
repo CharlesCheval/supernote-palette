@@ -188,3 +188,36 @@ function crossing(ring: P[], y: number): [P, P] | null {
     {x: Math.max(...xs), y},
   ];
 }
+
+/**
+ * Typical width (px) of a stroke as its contour draws it: twice the median
+ * distance from points of its centre line to the contour. Lets a stale
+ * contour (the host keeps the old one after a width change) be told apart.
+ */
+export function contourWidth(loops: P[][], centre: P[]): number {
+  const edge: P[] = [];
+  for (const l of loops) {
+    const step = Math.max(1, Math.floor(l.length / 600));
+    for (let i = 0; i < l.length; i += step) {
+      edge.push(l[i]);
+    }
+  }
+  if (!edge.length || !centre.length) {
+    return 0;
+  }
+  const step = Math.max(1, Math.floor(centre.length / 40));
+  const half: number[] = [];
+  for (let i = 0; i < centre.length; i += step) {
+    const c = centre[i];
+    let best = Infinity;
+    for (const q of edge) {
+      const d = (q.x - c.x) ** 2 + (q.y - c.y) ** 2;
+      if (d < best) {
+        best = d;
+      }
+    }
+    half.push(Math.sqrt(best));
+  }
+  half.sort((a, b) => a - b);
+  return 2 * half[Math.floor(half.length / 2)];
+}

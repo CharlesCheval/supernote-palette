@@ -1,4 +1,4 @@
-import {convexClosed, exactFill} from '../src/exactfill';
+import {contourWidth, convexClosed, exactFill} from '../src/exactfill';
 
 const rect = (l: number, t: number, r: number, b: number) => [
   {x: l, y: t},
@@ -111,4 +111,14 @@ test('a shape too small for its outline gets no exact fill', () => {
       5,
     ),
   ).toBeNull();
+});
+
+test('contour width: a band 12 px wide around its centre line reads as 12 px', () => {
+  const centre = Array.from({length: 101}, (_, i) => ({x: i * 5, y: 100}));
+  const loop = [
+    ...centre.map(p => ({x: p.x, y: p.y - 6})),
+    ...[...centre].reverse().map(p => ({x: p.x, y: p.y + 6})),
+  ];
+  expect(contourWidth([loop], centre)).toBeCloseTo(12, 6);
+  expect(contourWidth([], centre)).toBe(0);
 });

@@ -14,7 +14,7 @@ import {
 } from './patterns';
 import {areaSegments, enclosedArea} from './regions';
 import {Ink, hatchFill, solidFill} from './inkfill';
-import {PerfectShape, convexClosed, exactFill} from './exactfill';
+import {PerfectShape, contourWidth, convexClosed, exactFill} from './exactfill';
 import {
   ensureWriteAccess,
   errorText,
@@ -514,12 +514,24 @@ async function solidLines(
         }
       }
       if (o) {
+        // The fill stops at the stroke's real edge, not its centre line (fill
+        // lines are drawn above strokes: up to the centre, they covered the
+        // inner half of thick strokes, test.53). The real edge is the stroke's
+        // contour, when it matches the stroke's width (the host keeps the old
+        // contour after a width change); else the pen width.
+        const pen = px(o.style.penWidth);
+        const loops = await contourOf(e, size);
+        const w = loops.length ? contourWidth(loops, o.points) : 0;
+        if (w >= 0.35 * pen && w <= 1.3 * pen) {
+          inks.push({loops, centre: o.points});
+          continue;
+        }
         // Visible runs only (a partial eraser hides points through draw flags).
         for (const run of visibleRuns(
           o.points,
           await drawFlags(e, o.points.length),
         )) {
-          inks.push({points: run, width: 2});
+          inks.push({points: run, width: Math.max(2, pen)});
         }
       }
       continue;
