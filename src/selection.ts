@@ -618,7 +618,25 @@ async function applyPrepared(
     return ABANDONED;
   }
   // No explicit layer: the host uses the current layer.
-  const res: any = await PluginCommAPI.modifyPageElements(targets, page);
+  let res: any = await PluginCommAPI.modifyPageElements(targets, page);
+  if (modifiedCount(res) === 0) {
+    // Seen in PDFs: nothing modified. What the elements say about themselves,
+    // then one more try with their own page and layer.
+    const e0 = targets[0];
+    trace(
+      `0 modified · page ${page} · el. #${targets
+        .map(e => e.numInPage)
+        .join(',')} page ${e0.pageNum} layer ${e0.layerNum}`,
+    );
+    if (e0.pageNum !== page || e0.layerNum != null) {
+      res = await PluginCommAPI.modifyPageElements(
+        targets,
+        e0.pageNum,
+        e0.layerNum != null && e0.layerNum >= 0 ? e0.layerNum : null,
+      );
+      trace(`retry (own page/layer) → ${modifiedCount(res) ?? errorText(res)}`);
+    }
+  }
   const changed = ok<number[]>(res);
   trace(
     `modify: ${targets.length} el. → ${
@@ -644,6 +662,12 @@ async function applyPrepared(
     trace(`read back: ${(await applied(change)) ? 'changed' : 'unchanged'}`);
   }
   return {ok: true, message: `${targets.length} elements updated.`};
+}
+
+/** How many elements modifyPageElements reports changed (null if unknown). */
+function modifiedCount(res: any): number | null {
+  const r = ok<number[]>(res);
+  return Array.isArray(r) ? r.length : null;
 }
 
 /**

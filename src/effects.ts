@@ -229,9 +229,13 @@ async function dashElements(
   }
   const nums = elements.map(e => e.numInPage);
   trace(
-    `dash ${elements.length} element(s) #${nums.join(',')} · ${
-      pieces.length
-    } dashes · ${lassoHoldsExactly ? 'through the lasso' : 'by number'}`,
+    `dash ${elements.length} element(s) #${nums.join(
+      ',',
+    )} (page ${page}, el. page ${elements[0].pageNum} layer ${
+      elements[0].layerNum
+    }) · ${pieces.length} dashes · ${
+      lassoHoldsExactly ? 'through the lasso' : 'by number'
+    }`,
   );
   if (!lassoHoldsExactly && !(await releaseLasso())) {
     return {done: 0, why: 'the selection could not be let go: nothing changed'};
