@@ -69,7 +69,7 @@ Read back from the page, a circle's or ellipse's radius fields hold **twice** th
 
 ## Install and build
 
-1. Download `Palette.snplg` from the [latest release](https://github.com/CharlesCheval/supernote-stroke-width/releases/latest) and copy it to the device's `MyStyle` folder (USB, Supernote Partner or Browse & Access).
+1. Download `Palette.snplg` from the [latest release](https://github.com/CharlesCheval/supernote-palette/releases/latest) and copy it to the device's `MyStyle` folder (USB, Supernote Partner or Browse & Access).
 2. Open **Settings → Apps → Plugins → Add plugin**. It replaces Stroke Width in place, settings included.
 
 ```bash
