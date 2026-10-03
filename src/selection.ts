@@ -251,6 +251,12 @@ const keepAll: Prepared = {keep: () => true, extras: false};
  * lasso is let go.
  */
 export async function prepareSelection(): Promise<Prepared> {
+  if (await isPdf()) {
+    const fresh = await pdfFreshLasso();
+    if (fresh) {
+      return {...keepAll, error: fresh};
+    }
+  }
   const r = await lassoRects();
   if (!r || !differs(r)) {
     return keepAll;
@@ -687,7 +693,30 @@ export async function isPdf(): Promise<boolean> {
 }
 
 export const PDF_LIMIT =
-  'In a PDF, only a single shape can be restyled (select it again with the lasso), and only fills and hatching are drawn: other changes are not reliable there.';
+  'In a PDF, width and colour can only be changed on a single shape: other changes are not reliable there.';
+
+/**
+ * PDFs (measured, test.45): a shape still in the lasso Snap put on it reads
+ * as one shape, but the lasso APIs do not see it (getLassoGeometries: none,
+ * code 909), and actions on it went wrong (outline gone, hatching outside the
+ * shape). Once lassoed again by hand, everything works. Such a selection is
+ * recognised by the mismatch and refused before anything is touched.
+ */
+async function pdfFreshLasso(): Promise<string | undefined> {
+  const {elements, error} = await lassoElements();
+  if (error) {
+    return undefined; // reported by the action itself
+  }
+  const shapes = elements.filter(isShape).length;
+  if (!shapes) {
+    return undefined;
+  }
+  const geos = ok<any[]>(await PluginCommAPI.getLassoGeometries());
+  trace(`pdf: ${shapes} shape(s), lasso sees ${geos?.length ?? 0}`);
+  return (geos?.length ?? 0) === shapes
+    ? undefined
+    : 'In a PDF, this selection (made when the shape was drawn) cannot be used: tap outside, select the shape again with the lasso, then apply.';
+}
 
 /** How many elements modifyPageElements reports changed (null if unknown). */
 function modifiedCount(res: any): number | null {

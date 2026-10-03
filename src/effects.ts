@@ -17,7 +17,6 @@ import {Ink, hatchFill, solidFill} from './inkfill';
 import {
   ensureWriteAccess,
   errorText,
-  PDF_LIMIT,
   isPdf,
   isShape,
   isStroke,
@@ -253,7 +252,7 @@ async function dashElements(
   let deleted: any = lassoHoldsExactly
     ? await PluginCommAPI.deleteLassoElements()
     : await PluginCommAPI.deletePageElements(nums, page);
-  if (lassoHoldsExactly && !ok<boolean>(deleted)) {
+  if (lassoHoldsExactly && !ok<boolean>(deleted) && !(await isPdf())) {
     // In a PDF the lasso can be gone after the insertion: delete by number
     // (the dashes were appended, the originals keep their numbers).
     trace(`lasso delete: ${errorText(deleted)} → by number`);
@@ -283,9 +282,6 @@ async function dashes(
   onReady: OnReady = () => {},
 ): Promise<Result> {
   traceStart(`Dash ${dash}`);
-  if (await isPdf()) {
-    return {ok: false, message: PDF_LIMIT};
-  }
   const {all, targets, error} = await selection();
   if (error || !targets.length) {
     release(all);
@@ -307,6 +303,15 @@ async function dashes(
   const problems: string[] = [];
   // Only strokes and shapes selected, nothing else: they go through the lasso.
   const exactly = !releaseAfter && all.length === targets.length;
+  if (!exactly && (await isPdf())) {
+    // In a PDF only the lasso deletes reliably (by number: measured unreliable).
+    release(all);
+    return {
+      ok: false,
+      message:
+        'In a PDF, dashes need a selection holding only strokes and shapes: select them again without anything else.',
+    };
+  }
   const r = await dashElements(targets, dash, size, exactly);
   if (r.why) {
     problems.push(r.why);

@@ -80,16 +80,31 @@ test('a solid fill never re-inserts or deletes the outline: only the fill lines 
   expect(mockCalls).toEqual(['line']);
 });
 
-test('in a PDF, dashes are refused before anything is touched', async () => {
-  mockCalls.length = 0;
-  mockLasso = true;
-  (PluginCommAPI.getCurrentFilePath as jest.Mock).mockImplementationOnce(async () => ({
+const pdf = () =>
+  (PluginCommAPI.getCurrentFilePath as jest.Mock).mockImplementation(async () => ({
     success: true,
     result: '/Document/a.PDF',
   }));
+
+test('in a PDF, a shape still in the lasso made when it was drawn is refused, nothing touched', async () => {
+  mockCalls.length = 0;
+  mockLasso = true;
+  pdf();
+  (PluginCommAPI as any).getLassoGeometries = jest.fn(async () => ({success: false, error: {message: 'none', code: 909}}));
   startAction();
   const res = await applyDashes('dashed');
   expect(res.ok).toBe(false);
-  expect(res.message).toMatch(/PDF/);
+  expect(res.message).toMatch(/select the shape again/);
   expect(mockCalls).toEqual([]);
+});
+
+test('in a PDF, a shape lassoed by hand is dashed through the lasso', async () => {
+  mockCalls.length = 0;
+  mockLasso = true;
+  pdf();
+  (PluginCommAPI as any).getLassoGeometries = jest.fn(async () => ({success: true, result: [{}]}));
+  startAction();
+  const res = await applyDashes('dashed');
+  expect(res.ok).toBe(true);
+  expect(mockCalls).toEqual(['insert', 'lasso delete']);
 });
