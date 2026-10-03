@@ -264,8 +264,7 @@ export async function prepareSelection(): Promise<Prepared> {
   if (await isPdf()) {
     return {
       ...keepAll,
-      error:
-        'Moved or resized in a PDF: tap outside, select it again, then apply.',
+      error: 'In PDFs, select it again after moving it.',
     };
   }
   if (Math.abs(r.rotate) > 0.5) {
@@ -707,8 +706,7 @@ export async function isPdf(): Promise<boolean> {
   return typeof path === 'string' && path.toLowerCase().endsWith('.pdf');
 }
 
-export const PDF_LIMIT =
-  'In a PDF, only fills, hatching and the width or colour of a single shape are available: elements deleted in a PDF come back later, so nothing is deleted there.';
+export const PDF_LIMIT = 'Not available in PDFs (unstable).';
 
 /**
  * PDFs (measured, test.45–46): right after Snap draws a shape, its lasso reads
@@ -750,8 +748,7 @@ async function pdfLassoMismatch(): Promise<string | undefined> {
   return undefined;
 }
 
-export const PDF_RESELECT =
-  'In a PDF, the selection left by Snap is not reliable: tap outside, select the shape again with the lasso, then apply.';
+export const PDF_RESELECT = 'In PDFs, select the shape again with the lasso.';
 
 /** How many elements modifyPageElements reports changed (null if unknown). */
 function modifiedCount(res: any): number | null {

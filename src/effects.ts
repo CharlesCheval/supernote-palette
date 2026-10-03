@@ -509,7 +509,22 @@ async function solidLines(
       inks.push({points: o.points, width: px(o.style.penWidth)});
     }
   }
-  const area = solidFill(inks, SOLID_WIDTH, SOLID_SPACING, JOIN_GAP);
+  // Under shapes, the fill runs 2–3 px under the outline (a white sliver showed
+  // along perfect shapes, test.50), never more than a quarter of its width.
+  const shapeWidths = inks.flatMap(k =>
+    'points' in k && k.width > 2 ? [k.width] : [],
+  );
+  const overlap = shapeWidths.length
+    ? Math.min(3, Math.min(...shapeWidths) / 4)
+    : 0;
+  const area = solidFill(
+    inks,
+    SOLID_WIDTH,
+    SOLID_SPACING,
+    JOIN_GAP,
+    undefined,
+    overlap,
+  );
   if (!area) {
     return null;
   }
