@@ -471,7 +471,7 @@ export function hatchFill(
   spacing: number,
   clearance: number,
   gap = 0,
-): [P, P][] | null {
+): {segments: [P, P][]; paths: P[][]} | null {
   const f = field(inks, gap);
   if (!f) {
     return null;
@@ -500,7 +500,7 @@ export function hatchFill(
   ];
   const across = range(corners.map(p => p.x * nrm.x + p.y * nrm.y));
   const along = range(corners.map(p => p.x * u.x + p.y * u.y));
-  const ds = g.cell / 2;
+  const ds = g.cell;
   const out: [P, P][] = [];
   const at = (t: number, c: number): P => ({
     x: t * u.x + c * nrm.x,
@@ -527,7 +527,15 @@ export function hatchFill(
       }
     }
   }
-  return out;
+  // The same lines chained into few paths, each join running along the edge,
+  // in the band between the ink's centre and the line ends: under a stroke
+  // drawn above it, so unseen. (Each hatch line as its own element made a
+  // hatched shape heavy to move with the lasso.)
+  const way = new Uint8Array(g.cols * g.rows);
+  for (let i = 0; i < way.length; i++) {
+    way[i] = f.inside[i] && d[i] <= clearance + g.cell / 2 ? 1 : 0;
+  }
+  return {segments: out, paths: chain(g, way, [], out)};
 }
 
 export function solidFill(

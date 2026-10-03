@@ -122,7 +122,9 @@ test('hatching stays clear of a thick outline, square to it, at any angle', () =
   const outline = [...blob, blob[0]];
   const inkWidth = 24; // pen 2.0
   const hatchHalf = 2.5;
-  const segs = hatchFill([{points: outline, width: inkWidth}], 45, 20, hatchHalf + 1)!;
+  const hatch = hatchFill([{points: outline, width: inkWidth}], 45, 20, hatchHalf + 1)!;
+  const segs = hatch.segments;
+  expect(hatch.paths.length).toBeLessThan(segs.length / 4); // chained into few paths
   expect(segs.length).toBeGreaterThan(20);
   const toOutline = (p: P) => {
     let best = Infinity;

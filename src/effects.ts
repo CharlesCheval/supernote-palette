@@ -3,13 +3,11 @@ import {
   DashStyle,
   P,
   closedOutline,
-  dashFlags,
   dashPattern,
   dashPolyline,
   chainRows,
   hatchSegments,
   fillPolylines,
-  meanSpacing,
   splitArrow,
   range,
   visibleRuns,
@@ -22,7 +20,6 @@ import {
   isShape,
   isStroke,
   lassoElements,
-  forPageWrite,
   prepareSelection,
   releaseLasso,
   ok,
@@ -178,134 +175,89 @@ async function thenRelease<T>(work: Promise<T>): Promise<T> {
 }
 
 /**
- * Stroke route: hides the gaps through the stroke's own draw flags, then saves it
- * with modifyPageElements (clears the undo history). The stroke stays one element.
+ * Dashes for strokes and shapes alike: each is drawn again as one geometry per
+ * dash, then the original is deleted. (Strokes were first dashed by hiding
+ * points through their draw flags, as a partial eraser does; the device does
+ * not show that.) Dashes are drawn at the element's width and colour, with the
+ * fineliner for strokes (a dash has no pressure). An arrow keeps its head solid.
+ *
+ * Order: dashes inserted first, originals deleted only once every dash is in,
+ * so nothing is ever lost and nothing is re-inserted. Deletion goes through the
+ * lasso when it holds exactly these elements (no element number involved, the
+ * lasso keeps no copy), else the lasso is let go and they are deleted by number.
  */
-async function dashStrokes(
-  strokes: Element[],
-  dash: DashStyle,
-  size: Size,
-): Promise<{done: number; why?: string}> {
-  for (const e of strokes) {
-    const o = await outlineOf(e, size);
-    const flags = e.stroke?.flagDraw;
-    const n = o?.points.length ?? 0;
-    if (!o || !flags || (await flags.size()) !== n) {
-      return {done: 0, why: `stroke #${e.numInPage}: draw flags unavailable`};
-    }
-    const values = dashFlags(
-      o.points,
-      dashPattern(dash, px(o.style.penWidth)),
-      2 * meanSpacing(o.points),
-    );
-    if (!(await flags.setRange(0, n - 1, values))) {
-      return {
-        done: 0,
-        why: `stroke #${e.numInPage}: could not set the draw flags`,
-      };
-    }
-  }
-  const page =
-    ok<number>(await PluginCommAPI.getCurrentPageNum()) ?? strokes[0].pageNum;
-  if (!actionLive()) {
-    return {done: 0, why: ABANDONED.message};
-  }
-  const res: any = await PluginCommAPI.modifyPageElements(strokes, page);
-  return ok<number[]>(res)
-    ? {done: strokes.length}
-    : {done: 0, why: errorText(res)};
-}
-
-/** Shape route: deletes each shape by number, then draws one geometry per dash. */
-async function dashShapes(
-  shapes: Element[],
+async function dashElements(
+  elements: Element[],
   dash: DashStyle,
   size: Size | null,
   lassoHoldsExactly: boolean,
 ): Promise<{done: number; why?: string}> {
   const pieces: object[] = [];
-  for (const e of shapes) {
+  for (const e of elements) {
     const o = await outlineOf(e, size);
-    if (o) {
-      // An arrow keeps its head solid: only the shaft is dashed.
-      const arrow = splitArrow(o.points);
-      pieces.push(
-        ...dashPolyline(
-          arrow ? arrow.shaft : o.points,
-          dashPattern(dash, px(o.style.penWidth)),
-        ).map(d => geometry(d, o.style)),
-      );
-      if (arrow) {
-        pieces.push(geometry(arrow.head, o.style));
+    if (!o) {
+      continue;
+    }
+    const pattern = dashPattern(dash, px(o.style.penWidth));
+    if (isStroke(e)) {
+      const style: Style = {...o.style, penType: FINELINER};
+      for (const run of visibleRuns(
+        o.points,
+        await drawFlags(e, o.points.length),
+      )) {
+        pieces.push(...dashPolyline(run, pattern).map(d => geometry(d, style)));
       }
+      continue;
+    }
+    const arrow = splitArrow(o.points);
+    pieces.push(
+      ...dashPolyline(arrow ? arrow.shaft : o.points, pattern).map(d =>
+        geometry(d, o.style),
+      ),
+    );
+    if (arrow) {
+      pieces.push(geometry(arrow.head, o.style));
     }
   }
   if (!pieces.length) {
-    return {done: 0, why: 'could not read the shapes'};
+    return {done: 0, why: 'could not read the selection'};
   }
   const page =
-    ok<number>(await PluginCommAPI.getCurrentPageNum()) ?? shapes[0].pageNum;
+    ok<number>(await PluginCommAPI.getCurrentPageNum()) ?? elements[0].pageNum;
   if (!actionLive()) {
     return {done: 0, why: ABANDONED.message};
   }
-  const nums = shapes.map(e => e.numInPage);
+  const nums = elements.map(e => e.numInPage);
   trace(
-    `dash ${shapes.length} shape(s) #${nums.join(',')} (${shapes
-      .map(e => e.geometry?.type)
-      .join(', ')}) · ${pieces.length} dashes · ${
-      lassoHoldsExactly ? 'deleted through the lasso' : 'deleted by number'
-    }`,
+    `dash ${elements.length} element(s) #${nums.join(',')} · ${
+      pieces.length
+    } dashes · ${lassoHoldsExactly ? 'through the lasso' : 'by number'}`,
   );
-  if (lassoHoldsExactly) {
-    // The lasso holds exactly these shapes: deleted through the lasso itself,
-    // as its own eraser does. No element number is involved (right after a
-    // shape is created they may not be settled) and the lasso keeps no copy.
-    const deleted: any = await PluginCommAPI.deleteLassoElements();
-    const still: any = await PluginCommAPI.getLassoElements();
-    trace(
-      `lasso delete: ${
-        ok<boolean>(deleted) ? 'ok' : errorText(deleted)
-      } · lasso ${
-        ok<Element[]>(still)
-          ? `still holds ${ok<Element[]>(still)!.length}`
-          : 'gone'
-      }`,
-    );
-    if (!ok<boolean>(deleted)) {
-      return {done: 0, why: errorText(deleted)};
-    }
-  } else {
-    // Mixed selection: the lasso is let go first (while it holds the shapes the
-    // host keeps its own copy and writes it back), then the shapes are deleted
-    // by number.
-    if (!(await releaseLasso())) {
-      return {
-        done: 0,
-        why: 'the selection could not be let go: nothing changed',
-      };
-    }
-    const deleted: any = await PluginCommAPI.deletePageElements(nums, page);
-    trace(
-      `delete #${nums.join(',')}: ${
-        ok<boolean>(deleted) ? 'ok' : errorText(deleted)
-      }`,
-    );
-    if (!ok<boolean>(deleted)) {
-      return {done: 0, why: errorText(deleted)};
-    }
+  if (!lassoHoldsExactly && !(await releaseLasso())) {
+    return {done: 0, why: 'the selection could not be let go: nothing changed'};
   }
   const done = await insertAll(pieces);
   trace(`dashes drawn: ${done}/${pieces.length}`);
   if (done < pieces.length) {
-    // Put the shapes back rather than leave them half dashed.
-    shapes.forEach(forPageWrite);
-    await PluginCommAPI.insertPageElements(shapes, page);
     return {
       done: 0,
-      why: `only ${done} of ${pieces.length} dashes could be drawn; shapes restored`,
+      why: `only ${done} of ${pieces.length} dashes could be drawn; the originals were kept`,
     };
   }
-  return {done: shapes.length};
+  const deleted: any = lassoHoldsExactly
+    ? await PluginCommAPI.deleteLassoElements()
+    : await PluginCommAPI.deletePageElements(nums, page);
+  trace(
+    `originals deleted: ${ok<boolean>(deleted) ? 'ok' : errorText(deleted)}`,
+  );
+  return ok<boolean>(deleted)
+    ? {done: elements.length}
+    : {
+        done: 0,
+        why: `dashes drawn, but the originals could not be deleted: ${errorText(
+          deleted,
+        )}`,
+      };
 }
 
 /** Makes every selected stroke and shape dashed. */
@@ -337,25 +289,12 @@ async function dashes(
   }
   onReady();
   const size = await pageSize();
-  const strokes = targets.filter(isStroke);
-  const shapes = targets.filter(isShape);
   const problems: string[] = [];
-  if (strokes.length) {
-    const r = size
-      ? await dashStrokes(strokes, dash, size)
-      : {done: 0, why: 'unknown page size'};
-    if (r.why) {
-      problems.push(`strokes: ${r.why}`);
-    }
-  }
-  if (shapes.length) {
-    // Only shapes selected, nothing else: they can go through the lasso.
-    const exactly =
-      !releaseAfter && !strokes.length && all.length === shapes.length;
-    const r = await dashShapes(shapes, dash, size, exactly);
-    if (r.why) {
-      problems.push(`shapes: ${r.why}`);
-    }
+  // Only strokes and shapes selected, nothing else: they go through the lasso.
+  const exactly = !releaseAfter && all.length === targets.length;
+  const r = await dashElements(targets, dash, size, exactly);
+  if (r.why) {
+    problems.push(r.why);
   }
   // Modified and re-inserted elements stay referenced by the host: only the others are recycled.
   release(all.filter(e => !targets.includes(e)));
@@ -563,10 +502,11 @@ async function solidLines(
 
 /**
  * Hatching kept clear of the outline square to it, on the same grid as solid
- * fills. Strokes are taken at their full pen width (the hatching must stay off
- * all of a thick stroke), shapes at their exact width, eraser-cut strokes by
- * their drawn contour. Null when nothing enclosed is found: the caller falls
- * back.
+ * fills. Like a solid fill, it goes up to the middle of a hand-drawn stroke,
+ * which is drawn above it and hides its line ends: no white gap along a thin
+ * stroke, nothing showing past a thick one. Shapes are taken at their exact
+ * width, eraser-cut strokes by their drawn contour. Null when nothing enclosed
+ * is found: the caller falls back.
  */
 async function hatchLines(
   targets: Element[],
@@ -592,22 +532,26 @@ async function hatchLines(
         continue;
       }
     }
-    const runs = isStroke(e)
-      ? visibleRuns(o.points, await drawFlags(e, o.points.length))
-      : [o.points];
-    for (const run of runs) {
-      inks.push({points: run, width: px(o.style.penWidth)});
+    if (isStroke(e)) {
+      for (const run of visibleRuns(
+        o.points,
+        await drawFlags(e, o.points.length),
+      )) {
+        inks.push({points: run, width: 2});
+      }
+    } else {
+      inks.push({points: o.points, width: px(o.style.penWidth)});
     }
   }
   const plan = fillPlan(fill, outlineWidth, density);
-  const segments = hatchFill(
+  const hatch = hatchFill(
     inks,
     fill.hatch,
     plan.spacing,
     px(plan.width) / 2 + 1,
     JOIN_GAP,
   );
-  if (!segments || !segments.length) {
+  if (!hatch || !hatch.segments.length) {
     return null;
   }
   const style: Style = {
@@ -615,7 +559,14 @@ async function hatchLines(
     penColor: fill.color,
     penWidth: plan.width,
   };
-  return segments.map(sg => geometry(sg, style));
+  // Chained into few elements (light to move with the lasso) only when every
+  // outline is a stroke thick enough to hide the joins running under it.
+  const hidden = targets.every(
+    e => isStroke(e) && px(e.thickness) >= 2 * px(plan.width) + 4,
+  );
+  return hidden
+    ? hatch.paths.map(p => geometry(p, style))
+    : hatch.segments.map(sg => geometry(sg, style));
 }
 
 /** Lines inside one closed outline. */

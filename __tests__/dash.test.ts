@@ -57,11 +57,11 @@ jest.mock('sn-plugin-lib', () => ({
 import {applyDashes} from '../src/effects';
 import {startAction} from '../src/session';
 
-test('a lone selected shape is deleted through the lasso (no element number), then the dashes inserted', async () => {
+test('a lone selected shape: dashes inserted FIRST, then the original deleted through the lasso', async () => {
   startAction();
   const res = await applyDashes('dashed');
   expect(res.ok).toBe(true);
-  expect(mockCalls).toEqual(['lasso delete', 'insert']);
+  expect(mockCalls).toEqual(['insert', 'lasso delete']);
 });
 
 test('a solid fill never re-inserts or deletes the outline: only the fill lines are added', async () => {

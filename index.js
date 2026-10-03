@@ -21,7 +21,7 @@ loadSettings();
 const BUTTON = {
   id: BUTTON_WIDTH,
   name: 'Palette',
-  icon: Image.resolveAssetSource(require('./assets/icon_width.png')).uri,
+  icon: Image.resolveAssetSource(require('./assets/icon_palette.png')).uri,
   editDataTypes: EDIT_TYPES,
   showType: 1,
 };
