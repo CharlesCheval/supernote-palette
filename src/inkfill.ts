@@ -544,7 +544,6 @@ export function solidFill(
   spacing: number,
   gap = 0,
   cellSize?: number,
-  overlap = 0,
 ): SolidFill | null {
   const f = field(inks, gap, cellSize);
   if (!f) {
@@ -556,9 +555,7 @@ export function solidFill(
   // Contour loops are drawn as walls about 1.5 cells thick, centred on the real
   // edge: the inside starts that much short of it, which is made up here.
   const wall = inks.some(k => 'loops' in k) ? 0.75 * cell : 0;
-  // `overlap`: the ring's outer edge goes that far under the ink, so the grid
-  // (cells of 2–3 px) and the host's rendering leave no white sliver along it.
-  const r = Math.max(1, width / 2 - wall - overlap);
+  const r = width / 2 - wall;
   const rings = isolines(g, d, r)
     .map(l => simplify(l, 0.6))
     .filter(l => l.length >= 4);
@@ -571,13 +568,13 @@ export function solidFill(
   const rows = rowsIn(g, core, spacing);
 
   // Fine pass: inside cells the main lines do not reach — farther than r (plus
-  // the overlap, which the ring also covers, and a cell) from the core, along whose edge the ring runs — i.e. tips narrower
+  // a cell) from the core, along whose edge the ring runs — i.e. tips narrower
   // than a main line. Not the band along the edge, which the ring covers.
   const reach = chamfer(g, core, inside);
   const left = new Uint8Array(n);
   let leftCount = 0;
   for (let i = 0; i < n; i++) {
-    if (inside[i] && !core[i] && reach[i] * cell > r + overlap + cell) {
+    if (inside[i] && !core[i] && reach[i] * cell > r + cell) {
       left[i] = 1;
       leftCount++;
     }

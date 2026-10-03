@@ -706,7 +706,7 @@ export async function isPdf(): Promise<boolean> {
   return typeof path === 'string' && path.toLowerCase().endsWith('.pdf');
 }
 
-export const PDF_LIMIT = 'Not available in PDFs (unstable).';
+export const PDF_LIMIT = 'Not available in PDFs (unstable behavior).';
 
 /**
  * PDFs (measured, test.45–46): right after Snap draws a shape, its lasso reads
