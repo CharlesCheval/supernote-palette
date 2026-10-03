@@ -17,6 +17,8 @@ import {Ink, hatchFill, solidFill} from './inkfill';
 import {
   ensureWriteAccess,
   errorText,
+  PDF_LIMIT,
+  isPdf,
   isShape,
   isStroke,
   lassoElements,
@@ -281,6 +283,9 @@ async function dashes(
   onReady: OnReady = () => {},
 ): Promise<Result> {
   traceStart(`Dash ${dash}`);
+  if (await isPdf()) {
+    return {ok: false, message: PDF_LIMIT};
+  }
   const {all, targets, error} = await selection();
   if (error || !targets.length) {
     release(all);

@@ -255,6 +255,13 @@ export async function prepareSelection(): Promise<Prepared> {
   if (!r || !differs(r)) {
     return keepAll;
   }
+  if (await isPdf()) {
+    return {
+      ...keepAll,
+      error:
+        'Moved or resized in a PDF: tap outside, select it again, then apply.',
+    };
+  }
   if (Math.abs(r.rotate) > 0.5) {
     return {
       ...keepAll,
@@ -588,6 +595,9 @@ async function applyPrepared(
     }
     trace(`lasso shape: ${viaLasso.message} → page route`);
   }
+  if (await isPdf()) {
+    return {ok: false, message: PDF_LIMIT};
+  }
   if (!(await ensureWriteAccess())) {
     return {
       ok: false,
@@ -663,6 +673,21 @@ async function applyPrepared(
   }
   return {ok: true, message: `${targets.length} elements updated.`};
 }
+
+/**
+ * PDFs (measured on a Manta, test.43–44): modifyPageElements changes nothing
+ * (0 modified, with the element's own page and layer too), deleting and
+ * letting the lasso go are unreliable, and the page was left in a strange state
+ * (a selection box reaching far off the page). In a PDF only what works is
+ * offered: one lassoed shape (lasso route), fills and hatching.
+ */
+export async function isPdf(): Promise<boolean> {
+  const path = ok<string>(await PluginCommAPI.getCurrentFilePath());
+  return typeof path === 'string' && path.toLowerCase().endsWith('.pdf');
+}
+
+export const PDF_LIMIT =
+  'In a PDF, only a single shape can be restyled (select it again with the lasso), and only fills and hatching are drawn: other changes are not reliable there.';
 
 /** How many elements modifyPageElements reports changed (null if unknown). */
 function modifiedCount(res: any): number | null {

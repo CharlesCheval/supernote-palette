@@ -24,6 +24,10 @@ jest.mock('sn-plugin-lib', () => ({
     ),
     getPageDisplaySize: jest.fn(async () => ({success: true, result: {width: 1920, height: 2560}})),
     getCurrentPageNum: jest.fn(async () => ({success: true, result: 0})),
+    getCurrentFilePath: jest.fn(async () => ({
+      success: true,
+      result: '/Note/a.note',
+    })),
     clearElementCache: jest.fn(),
     setLassoBoxState: jest.fn(async () => {
       mockCalls.push('let go');
@@ -56,6 +60,7 @@ jest.mock('sn-plugin-lib', () => ({
 }));
 import {applyDashes} from '../src/effects';
 import {startAction} from '../src/session';
+import {PluginCommAPI} from 'sn-plugin-lib';
 
 test('a lone selected shape: dashes inserted FIRST, then the original deleted through the lasso', async () => {
   startAction();
@@ -73,4 +78,18 @@ test('a solid fill never re-inserts or deletes the outline: only the fill lines 
   expect(res.ok).toBe(true);
   // The whole fill is ONE continuous path (one geometry); the outline is not touched.
   expect(mockCalls).toEqual(['line']);
+});
+
+test('in a PDF, dashes are refused before anything is touched', async () => {
+  mockCalls.length = 0;
+  mockLasso = true;
+  (PluginCommAPI.getCurrentFilePath as jest.Mock).mockImplementationOnce(async () => ({
+    success: true,
+    result: '/Document/a.PDF',
+  }));
+  startAction();
+  const res = await applyDashes('dashed');
+  expect(res.ok).toBe(false);
+  expect(res.message).toMatch(/PDF/);
+  expect(mockCalls).toEqual([]);
 });

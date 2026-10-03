@@ -4,6 +4,10 @@ jest.mock('sn-plugin-lib', () => ({
     getLassoElements: jest.fn(),
     getPenInfo: jest.fn(async () => ({success: true, result: {width: 300}})),
     getCurrentPageNum: jest.fn(async () => ({success: true, result: 0})),
+    getCurrentFilePath: jest.fn(async () => ({
+      success: true,
+      result: '/Note/a.note',
+    })),
     modifyPageElements: jest.fn(),
     recycleElement: jest.fn(),
     clearElementCache: jest.fn(),

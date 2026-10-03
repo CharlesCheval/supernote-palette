@@ -7,6 +7,10 @@ jest.mock('sn-plugin-lib', () => ({
     getLassoElements: jest.fn(),
     getPenInfo: jest.fn(async () => ({success: true, result: {width: 300}})),
     getCurrentPageNum: jest.fn(async () => ({success: true, result: 0})),
+    getCurrentFilePath: jest.fn(async () => ({
+      success: true,
+      result: '/Note/a.note',
+    })),
     getPageDisplaySize: jest.fn(async () => ({success: true, result: {width: 1920, height: 2560}})),
     clearElementCache: jest.fn(),
     setLassoBoxState: jest.fn(),
