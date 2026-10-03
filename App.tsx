@@ -17,8 +17,15 @@ import {
   View,
 } from 'react-native';
 import {PluginManager} from 'sn-plugin-lib';
-import {Summary, applyStyle, readSummary} from './src/selection';
-import {FILLS, FillStyle, HATCHES, applyDashes, applyFill} from './src/effects';
+import {Summary, readSummary} from './src/selection';
+import {
+  FILLS,
+  FillStyle,
+  HATCHES,
+  applyDashes,
+  applyFill,
+  applyStyleEverywhere,
+} from './src/effects';
 import {DASH_STYLES, DashStyle} from './src/patterns';
 import {LIMITS, getSettings, subscribe, updateSettings} from './src/settings';
 import {PEN_COLORS, StyleChange} from './src/style';
@@ -263,7 +270,7 @@ function App(): React.JSX.Element {
   };
 
   const apply = (change: StyleChange) =>
-    run(ready => applyStyle(change, ready));
+    run(ready => applyStyleEverywhere(change, ready));
 
   const pen = summary?.penWidth;
 
