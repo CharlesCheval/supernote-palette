@@ -14,6 +14,7 @@ import {
 } from './patterns';
 import {areaSegments, enclosedArea} from './regions';
 import {Ink, hatchFill, solidFill} from './inkfill';
+import {PerfectShape, convexClosed, exactFill} from './exactfill';
 import {
   ensureWriteAccess,
   errorText,
@@ -483,6 +484,24 @@ async function solidLines(
   fill: FillStyle,
   size: Size | null,
 ): Promise<object[] | null> {
+  const style: Style = {
+    penType: FINELINER,
+    penColor: fill.color,
+    penWidth: SOLID_WIDTH * 100,
+  };
+  const exact =
+    targets.length === 1 ? await perfectShape(targets[0], size) : null;
+  if (exact) {
+    const path = exactFill(
+      exact.shape,
+      exact.inkWidth,
+      SOLID_WIDTH,
+      SOLID_SPACING,
+    );
+    if (path) {
+      return [geometry(path, style)];
+    }
+  }
   const inks: Ink[] = [];
   for (const e of targets) {
     const o = await outlineOf(e, size);
@@ -513,16 +532,45 @@ async function solidLines(
   if (!area) {
     return null;
   }
-  const style: Style = {
-    penType: FINELINER,
-    penColor: fill.color,
-    penWidth: SOLID_WIDTH * 100,
-  };
   // A few continuous paths (usually one per enclosed part): a lasso touching
   // any bit of the fill takes it whole, and the host inserts few elements.
   return area.paths.map(p =>
     geometry(p.points, {...style, penWidth: Math.round(p.width * 100)}),
   );
+}
+
+/**
+ * A lone perfect shape (circle, ellipse, closed convex polygon) is filled from
+ * its exact geometry (see exactfill), not on the grid.
+ */
+async function perfectShape(
+  e: Element,
+  size: Size | null,
+): Promise<{shape: PerfectShape; inkWidth: number} | null> {
+  const g = e.geometry;
+  if (!isShape(e) || !g) {
+    return null;
+  }
+  const inkWidth = px(styleOf(e).penWidth);
+  if (
+    (g.type === 'GEO_circle' || g.type === 'GEO_ellipse') &&
+    g.ellipseCenterPoint
+  ) {
+    // Read from the page, the radius fields hold twice the radius.
+    return {
+      shape: {
+        kind: 'ellipse',
+        c: g.ellipseCenterPoint,
+        rx: g.ellipseMajorAxisRadius / 2,
+        ry: g.ellipseMinorAxisRadius / 2,
+        angle: g.ellipseAngle,
+      },
+      inkWidth,
+    };
+  }
+  const o = await outlineOf(e, size);
+  const points = o && convexClosed(o.points);
+  return points ? {shape: {kind: 'polygon', points}, inkWidth} : null;
 }
 
 /**
