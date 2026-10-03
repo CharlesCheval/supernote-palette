@@ -501,12 +501,14 @@ async function solidLines(
 }
 
 /**
- * Hatching kept clear of the outline square to it, on the same grid as solid
- * fills. Like a solid fill, it goes up to the middle of a hand-drawn stroke,
- * which is drawn above it and hides its line ends: no white gap along a thin
- * stroke, nothing showing past a thick one. Shapes are taken at their exact
- * width, eraser-cut strokes by their drawn contour. Null when nothing enclosed
- * is found: the caller falls back.
+ * Hatching on the same grid as solid fills, its line ends placed square to the
+ * outline: each end's round cap just overlaps the inner edge of the outline
+ * (about 1 px), which closes the hatching against it as the former hatching
+ * did on thin strokes, without running onto thick ones. (The fill lines are
+ * drawn ABOVE strokes, measured: a line taken up to the middle of a thick
+ * stroke showed over it.) Outlines are taken at their pen width, eraser-cut
+ * strokes by their drawn contour. Null when nothing enclosed is found: the
+ * caller falls back.
  */
 async function hatchLines(
   targets: Element[],
@@ -532,15 +534,11 @@ async function hatchLines(
         continue;
       }
     }
-    if (isStroke(e)) {
-      for (const run of visibleRuns(
-        o.points,
-        await drawFlags(e, o.points.length),
-      )) {
-        inks.push({points: run, width: 2});
-      }
-    } else {
-      inks.push({points: o.points, width: px(o.style.penWidth)});
+    const runs = isStroke(e)
+      ? visibleRuns(o.points, await drawFlags(e, o.points.length))
+      : [o.points];
+    for (const run of runs) {
+      inks.push({points: run, width: px(o.style.penWidth)});
     }
   }
   const plan = fillPlan(fill, outlineWidth, density);
@@ -548,7 +546,8 @@ async function hatchLines(
     inks,
     fill.hatch,
     plan.spacing,
-    px(plan.width) / 2 + 1,
+    // Ends this far from the ink: the cap (half a line) overlaps it by ~1 px.
+    Math.max(0.5, px(plan.width) / 2 - 1),
     JOIN_GAP,
   );
   if (!hatch || !hatch.segments.length) {
@@ -559,14 +558,8 @@ async function hatchLines(
     penColor: fill.color,
     penWidth: plan.width,
   };
-  // Chained into few elements (light to move with the lasso) only when every
-  // outline is a stroke thick enough to hide the joins running under it.
-  const hidden = targets.every(
-    e => isStroke(e) && px(e.thickness) >= 2 * px(plan.width) + 4,
-  );
-  return hidden
-    ? hatch.paths.map(p => geometry(p, style))
-    : hatch.segments.map(sg => geometry(sg, style));
+  // One element per line: joins between lines would show (drawn above strokes).
+  return hatch.segments.map(sg => geometry(sg, style));
 }
 
 /** Lines inside one closed outline. */
