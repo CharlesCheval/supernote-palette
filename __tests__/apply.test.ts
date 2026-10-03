@@ -9,6 +9,9 @@ jest.mock('sn-plugin-lib', () => ({
       result: '/Note/a.note',
     })),
     modifyPageElements: jest.fn(),
+    getLassoRect: jest.fn(async () => ({success: false})),
+    deleteLassoElements: jest.fn(async () => ({success: true, result: true})),
+    insertPageElements: jest.fn(async () => ({success: true, result: true})),
     recycleElement: jest.fn(),
     clearElementCache: jest.fn(),
   },
@@ -75,3 +78,35 @@ test('the lasso is never let go nor made again', async () => {
   expect(api.lassoElements).not.toHaveBeenCalled();
 });
 
+
+test('in a PDF (modify changes nothing there): deleted through the lasso first, then inserted restyled', async () => {
+  const order: string[] = [];
+  api.getCurrentFilePath.mockImplementation(async () => ({success: true, result: '/Document/a.pdf'}));
+  api.deleteLassoElements.mockImplementation(async () => {
+    order.push('delete');
+    return {success: true, result: true};
+  });
+  api.insertPageElements.mockImplementation(async (els: any[]) => {
+    order.push(`insert ${els.map(e => e.thickness).join(',')}`);
+    return {success: true, result: true};
+  });
+  startAction();
+  const res = await applyStyle({width: 300});
+  expect(res.ok).toBe(true);
+  expect(order).toEqual(['delete', 'insert 300,300']);
+  expect(api.modifyPageElements).not.toHaveBeenCalled();
+});
+
+test('in a PDF, a refused insertion puts the selection back unchanged', async () => {
+  const order: string[] = [];
+  api.getCurrentFilePath.mockImplementation(async () => ({success: true, result: '/Document/a.pdf'}));
+  api.insertPageElements.mockImplementation(async (els: any[]) => {
+    order.push(`insert ${els.map(e => e.thickness).join(',')}`);
+    return order.length === 1 ? {success: false, error: {message: 'no', code: 1}} : {success: true, result: true};
+  });
+  startAction();
+  const res = await applyStyle({width: 300});
+  expect(res.ok).toBe(false);
+  expect(res.message).toMatch(/put back/);
+  expect(order).toEqual(['insert 300,300', 'insert 2400,2400']);
+});

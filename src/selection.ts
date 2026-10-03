@@ -604,10 +604,9 @@ async function applyPrepared(
     trace(`lasso shape: ${viaLasso.message} → page route`);
   }
   if (await isPdf()) {
-    return {
-      ok: false,
-      message: viaLassoRefused909 ? PDF_RESELECT : PDF_LIMIT,
-    };
+    return viaLassoRefused909
+      ? {ok: false, message: PDF_RESELECT}
+      : restyleInPdf(change, prep);
   }
   if (!(await ensureWriteAccess())) {
     return {
@@ -742,6 +741,86 @@ async function pdfLassoMismatch(): Promise<string | undefined> {
 
 export const PDF_RESELECT =
   'In a PDF, the selection left by Snap is not reliable: tap outside, select the shape again with the lasso, then apply.';
+
+/**
+ * PDFs: modifyPageElements changes nothing there (measured), so the selection
+ * is replaced: deleted through the lasso first (inserting lets the lasso go,
+ * measured), then inserted again restyled; if that insertion fails, the
+ * elements are put back as they were.
+ */
+async function restyleInPdf(
+  change: StyleChange,
+  prep: Prepared,
+): Promise<{ok: boolean; message: string}> {
+  const {elements, error} = await lassoElements();
+  if (error) {
+    return {ok: false, message: error};
+  }
+  const targets = elements.filter(e => isStroke(e) || isShape(e));
+  if (prep.extras || !targets.length || targets.length !== elements.length) {
+    return {ok: false, message: PDF_LIMIT};
+  }
+  if (!(await ensureWriteAccess())) {
+    return {
+      ok: false,
+      message:
+        'File access denied: allow it ("Always allow") to change the selection.',
+    };
+  }
+  const page =
+    ok<number>(await PluginCommAPI.getCurrentPageNum()) ?? targets[0].pageNum;
+  if (!actionLive()) {
+    return ABANDONED;
+  }
+  const before = targets.map(e => ({
+    thickness: e.thickness,
+    penWidth: e.geometry?.penWidth,
+    strokeColor: e.stroke?.penColor,
+    geoColor: e.geometry?.penColor,
+  }));
+  const deleted: any = await PluginCommAPI.deleteLassoElements();
+  trace(
+    `PDF: deleted first: ${ok<boolean>(deleted) ? 'ok' : errorText(deleted)}`,
+  );
+  if (!ok<boolean>(deleted)) {
+    return {
+      ok: false,
+      message: `Not changed: the selection could not be replaced (${errorText(
+        deleted,
+      )}).`,
+    };
+  }
+  for (const e of targets) {
+    restyle(e, change);
+    forPageWrite(e);
+  }
+  const res: any = await PluginCommAPI.insertPageElements(targets, page);
+  trace(`PDF: inserted restyled: ${res?.success ? 'ok' : errorText(res)}`);
+  if (res?.success && res.result !== false) {
+    return {ok: true, message: `${targets.length} elements updated.`};
+  }
+  targets.forEach((e, i) => {
+    const b = before[i];
+    e.thickness = b.thickness;
+    if (e.geometry) {
+      e.geometry.penWidth = b.penWidth!;
+      e.geometry.penColor = b.geoColor!;
+    }
+    if (e.stroke && b.strokeColor != null) {
+      e.stroke.penColor = b.strokeColor;
+    }
+  });
+  const back: any = await PluginCommAPI.insertPageElements(targets, page);
+  trace(`PDF: put back: ${back?.success ? 'ok' : errorText(back)}`);
+  return {
+    ok: false,
+    message: `Not changed: ${errorText(res)}; ${
+      back?.success
+        ? 'the selection was put back'
+        : 'the selection could NOT be put back'
+    }.`,
+  };
+}
 
 /** How many elements modifyPageElements reports changed (null if unknown). */
 function modifiedCount(res: any): number | null {

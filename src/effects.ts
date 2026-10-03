@@ -17,6 +17,7 @@ import {Ink, hatchFill, solidFill} from './inkfill';
 import {
   ensureWriteAccess,
   errorText,
+  forPageWrite,
   isPdf,
   isShape,
   isStroke,
@@ -241,6 +242,9 @@ async function dashElements(
   if (!lassoHoldsExactly && !(await releaseLasso())) {
     return {done: 0, why: 'the selection could not be let go: nothing changed'};
   }
+  if (lassoHoldsExactly && (await isPdf())) {
+    return dashInPdf(elements, pieces, page);
+  }
   const done = await insertAll(pieces);
   trace(`dashes drawn: ${done}/${pieces.length}`);
   if (done < pieces.length) {
@@ -269,6 +273,50 @@ async function dashElements(
           deleted,
         )}`,
       };
+}
+
+/**
+ * PDFs (measured, test.47): inserting lets the lasso go ("No lasso action has
+ * been performed", code 904), so the originals can no longer be deleted
+ * through it, and deleting by number is unreliable there. The originals are
+ * deleted through the lasso FIRST, then the dashes are inserted; if they
+ * cannot all be, the originals are put back.
+ */
+async function dashInPdf(
+  elements: Element[],
+  pieces: object[],
+  page: number,
+): Promise<{done: number; why?: string}> {
+  const deleted: any = await PluginCommAPI.deleteLassoElements();
+  trace(
+    `PDF: originals deleted first: ${
+      ok<boolean>(deleted) ? 'ok' : errorText(deleted)
+    }`,
+  );
+  if (!ok<boolean>(deleted)) {
+    return {
+      done: 0,
+      why: `the originals could not be deleted: nothing changed (${errorText(
+        deleted,
+      )})`,
+    };
+  }
+  const done = await insertAll(pieces);
+  trace(`dashes drawn: ${done}/${pieces.length}`);
+  if (done === pieces.length) {
+    return {done: elements.length};
+  }
+  elements.forEach(forPageWrite);
+  const back: any = await PluginCommAPI.insertPageElements(elements, page);
+  trace(`originals put back: ${ok<boolean>(back) ? 'ok' : errorText(back)}`);
+  return {
+    done: 0,
+    why: `only ${done} of ${pieces.length} dashes could be drawn; ${
+      ok<boolean>(back)
+        ? 'the originals were put back'
+        : `the originals could not be put back (${errorText(back)})`
+    }`,
+  };
 }
 
 /** Makes every selected stroke and shape dashed. */

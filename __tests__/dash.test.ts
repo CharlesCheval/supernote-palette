@@ -97,7 +97,7 @@ test('in a PDF, a shape read outside its lasso (the lasso Snap leaves) is refuse
   expect(mockCalls).toEqual([]);
 });
 
-test('in a PDF, a shape lassoed by hand is dashed through the lasso', async () => {
+test('in a PDF, a shape lassoed by hand: deleted through the lasso FIRST (inserting lets it go), then dashed', async () => {
   mockCalls.length = 0;
   mockLasso = true;
   pdf();
@@ -110,5 +110,5 @@ test('in a PDF, a shape lassoed by hand is dashed through the lasso', async () =
   startAction();
   const res = await applyDashes('dashed');
   expect(res.ok).toBe(true);
-  expect(mockCalls).toEqual(['insert', 'lasso delete']);
+  expect(mockCalls).toEqual(['lasso delete', 'insert']);
 });
