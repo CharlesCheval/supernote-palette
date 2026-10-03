@@ -581,7 +581,12 @@ async function applyPrepared(
     !summary.error &&
     lassoRoute(summary.strokes, summary.shapes)
   ) {
-    return applyToLassoShape(change);
+    const viaLasso = await applyToLassoShape(change);
+    // In a PDF the lasso route can be refused: the page route is tried next.
+    if (viaLasso.ok || viaLasso === ABANDONED) {
+      return viaLasso;
+    }
+    trace(`lasso shape: ${viaLasso.message} → page route`);
   }
   if (!(await ensureWriteAccess())) {
     return {

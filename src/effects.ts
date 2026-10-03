@@ -244,9 +244,15 @@ async function dashElements(
       why: `only ${done} of ${pieces.length} dashes could be drawn; the originals were kept`,
     };
   }
-  const deleted: any = lassoHoldsExactly
+  let deleted: any = lassoHoldsExactly
     ? await PluginCommAPI.deleteLassoElements()
     : await PluginCommAPI.deletePageElements(nums, page);
+  if (lassoHoldsExactly && !ok<boolean>(deleted)) {
+    // In a PDF the lasso can be gone after the insertion: delete by number
+    // (the dashes were appended, the originals keep their numbers).
+    trace(`lasso delete: ${errorText(deleted)} → by number`);
+    deleted = await PluginCommAPI.deletePageElements(nums, page);
+  }
   trace(
     `originals deleted: ${ok<boolean>(deleted) ? 'ok' : errorText(deleted)}`,
   );
