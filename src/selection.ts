@@ -252,7 +252,7 @@ const keepAll: Prepared = {keep: () => true, extras: false};
  */
 export async function prepareSelection(): Promise<Prepared> {
   if (await isPdf()) {
-    const fresh = await pdfFreshLasso();
+    const fresh = await pdfLassoMismatch();
     if (fresh) {
       return {...keepAll, error: fresh};
     }
@@ -589,6 +589,7 @@ async function applyPrepared(
 ): Promise<{ok: boolean; message: string}> {
   const summary = await readSummary();
   onReady();
+  let viaLassoRefused909 = false;
   if (
     !prep.extras &&
     !summary.error &&
@@ -599,10 +600,14 @@ async function applyPrepared(
     if (viaLasso.ok || viaLasso === ABANDONED) {
       return viaLasso;
     }
+    viaLassoRefused909 = /code 909/.test(viaLasso.message);
     trace(`lasso shape: ${viaLasso.message} → page route`);
   }
   if (await isPdf()) {
-    return {ok: false, message: PDF_LIMIT};
+    return {
+      ok: false,
+      message: viaLassoRefused909 ? PDF_RESELECT : PDF_LIMIT,
+    };
   }
   if (!(await ensureWriteAccess())) {
     return {
@@ -696,27 +701,47 @@ export const PDF_LIMIT =
   'In a PDF, width and colour can only be changed on a single shape: other changes are not reliable there.';
 
 /**
- * PDFs (measured, test.45): a shape still in the lasso Snap put on it reads
- * as one shape, but the lasso APIs do not see it (getLassoGeometries: none,
- * code 909), and actions on it went wrong (outline gone, hatching outside the
- * shape). Once lassoed again by hand, everything works. Such a selection is
- * recognised by the mismatch and refused before anything is touched.
+ * PDFs (measured, test.45–46): right after Snap draws a shape, its lasso reads
+ * as one shape but its points are not where the shape is (hatching came out
+ * outside, at the wrong size; the outline could vanish), and
+ * modifyLassoGeometry refuses it (code 909). Lassoed again by hand, all is
+ * right. Counting the lasso's geometries did not tell them apart (test.46):
+ * the read shape is checked against the lasso rect instead, and refused when
+ * it does not lie inside it.
  */
-async function pdfFreshLasso(): Promise<string | undefined> {
+async function pdfLassoMismatch(): Promise<string | undefined> {
+  const rect = ok<Rect>(
+    await withTimeout(PluginCommAPI.getLassoRect() as Promise<any>, 3000, null),
+  );
   const {elements, error} = await lassoElements();
-  if (error) {
+  if (!rect || error || !elements.length) {
     return undefined; // reported by the action itself
   }
-  const shapes = elements.filter(isShape).length;
-  if (!shapes) {
-    return undefined;
+  const size = await pageSize();
+  const slack = Math.max(
+    30,
+    0.15 * Math.max(rect.right - rect.left, rect.bottom - rect.top),
+  );
+  for (const e of elements.filter(x => isStroke(x) || isShape(x))) {
+    const p = await printOf(e, size);
+    if (!p) {
+      continue;
+    }
+    const inside =
+      p.box.left >= rect.left - slack &&
+      p.box.top >= rect.top - slack &&
+      p.box.right <= rect.right + slack &&
+      p.box.bottom <= rect.bottom + slack;
+    if (!inside) {
+      trace(`pdf: ${p.kind} at ${fmtRect(p.box)} ∉ lasso ${fmtRect(rect)}`);
+      return PDF_RESELECT;
+    }
   }
-  const geos = ok<any[]>(await PluginCommAPI.getLassoGeometries());
-  trace(`pdf: ${shapes} shape(s), lasso sees ${geos?.length ?? 0}`);
-  return (geos?.length ?? 0) === shapes
-    ? undefined
-    : 'In a PDF, this selection (made when the shape was drawn) cannot be used: tap outside, select the shape again with the lasso, then apply.';
+  return undefined;
 }
+
+export const PDF_RESELECT =
+  'In a PDF, the selection left by Snap is not reliable: tap outside, select the shape again with the lasso, then apply.';
 
 /** How many elements modifyPageElements reports changed (null if unknown). */
 function modifiedCount(res: any): number | null {

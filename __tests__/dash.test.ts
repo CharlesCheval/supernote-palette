@@ -86,11 +86,10 @@ const pdf = () =>
     result: '/Document/a.PDF',
   }));
 
-test('in a PDF, a shape still in the lasso made when it was drawn is refused, nothing touched', async () => {
+test('in a PDF, a shape read outside its lasso (the lasso Snap leaves) is refused, nothing touched', async () => {
   mockCalls.length = 0;
   mockLasso = true;
-  pdf();
-  (PluginCommAPI as any).getLassoGeometries = jest.fn(async () => ({success: false, error: {message: 'none', code: 909}}));
+  pdf(); // lasso rect 0–10, the shape read at 0–400
   startAction();
   const res = await applyDashes('dashed');
   expect(res.ok).toBe(false);
@@ -102,7 +101,12 @@ test('in a PDF, a shape lassoed by hand is dashed through the lasso', async () =
   mockCalls.length = 0;
   mockLasso = true;
   pdf();
-  (PluginCommAPI as any).getLassoGeometries = jest.fn(async () => ({success: true, result: [{}]}));
+  const r = {left: -5, top: -5, right: 405, bottom: 305};
+  (PluginCommAPI.getLassoRect as jest.Mock).mockImplementation(async () => ({success: true, result: r}));
+  (PluginCommAPI.generateLassoPreview as jest.Mock).mockImplementation(async () => ({
+    success: true,
+    result: {imagePath: '', rect: r, rotateDegree: 0},
+  }));
   startAction();
   const res = await applyDashes('dashed');
   expect(res.ok).toBe(true);
