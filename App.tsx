@@ -31,7 +31,6 @@ import {LIMITS, getSettings, subscribe, updateSettings} from './src/settings';
 import {PEN_COLORS, StyleChange} from './src/style';
 import {actionLive, newOpening, startAction} from './src/session';
 import {PRESETS_MM, formatMm, toInternal} from './src/widths';
-import {getTrace} from './src/trace';
 
 export const REFRESH_EVENT = 'strokewidth:refresh';
 
@@ -192,10 +191,7 @@ function App(): React.JSX.Element {
     if (!toast) {
       return;
     }
-    const timer = setTimeout(
-      () => setToast(''),
-      toast.includes('\n') ? 20000 : TOAST_MS,
-    );
+    const timer = setTimeout(() => setToast(''), TOAST_MS);
     return () => clearTimeout(timer);
   }, [toast]);
 
@@ -262,8 +258,7 @@ function App(): React.JSX.Element {
     }
     setWorking(false);
     if (failure) {
-      // The steps taken, so a failure can be understood from a screenshot.
-      setToast([failure, ...getTrace().slice(1)].join('\n'));
+      setToast(failure);
     } else {
       PluginManager.closePluginView();
     }
