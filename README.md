@@ -1,5 +1,11 @@
 # Palette — Supernote plugin
 
+<p align="center">
+  <img src="docs/palette-demo.gif" alt="Palette demo: restyling a lasso selection (width, colour, dashes, hatching, fill)" width="360">
+  <br>
+  <sub><a href="docs/palette-demo.mp4">Full-quality video (MP4)</a></sub>
+</p>
+
 Formerly **Stroke Width** (then Inkwell during testing).
 
 Lasso some strokes or shapes, tap **Palette** in the lasso toolbar, and restyle them at once: pen size, colour, dashed lines, hatching or a solid fill. No confirmation; the panel closes when the change is done.
