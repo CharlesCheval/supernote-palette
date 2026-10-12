@@ -31,6 +31,7 @@ import {LIMITS, getSettings, subscribe, updateSettings} from './src/settings';
 import {PEN_COLORS, StyleChange} from './src/style';
 import {actionLive, newOpening, startAction} from './src/session';
 import {PRESETS_MM, formatMm, toInternal} from './src/widths';
+import {Plan, PlanKey, isPicked, steps, toggle} from './src/plan';
 
 export const REFRESH_EVENT = 'strokewidth:refresh';
 
@@ -180,6 +181,9 @@ function App(): React.JSX.Element {
   const [busy, setBusy] = useState(false);
   const [working, setWorking] = useState(false);
   const [toast, setToast] = useState('');
+  // Several changes at once: null, or the changes picked so far (a long press
+  // on any option starts picking; Apply runs them, in a fixed order).
+  const [plan, setPlan] = useState<Plan | null>(null);
   // Saved settings (hatch density): re-render when they load or change.
   const [, settingsChanged] = useState(0);
   useEffect(() => subscribe(() => settingsChanged(n => n + 1)), []);
@@ -202,6 +206,7 @@ function App(): React.JSX.Element {
     setBusy(false);
     setWorking(false);
     setToast('');
+    setPlan(null);
     setSummary(null);
     readSummary()
       .then(setSummary)
@@ -267,6 +272,67 @@ function App(): React.JSX.Element {
   const apply = (change: StyleChange) =>
     run(ready => applyStyleEverywhere(change, ready));
 
+  /** One change, applied at once (`run` is not called here). */
+  const stepAction = (k: PlanKey, p: Plan): Action => {
+    switch (k) {
+      case 'width':
+        return ready => applyStyleEverywhere({width: p.width!}, ready);
+      case 'color':
+        return ready => applyStyleEverywhere({color: p.color!}, ready);
+      case 'fill':
+        return ready => applyFill(p.fill!, ready);
+      case 'hatch':
+        return ready => applyFill(p.hatch!, ready, density);
+      case 'dash':
+        return ready => applyDashes(p.dash!, ready);
+    }
+  };
+  const STEP_NAME: Record<PlanKey, string> = {
+    width: 'Width',
+    color: 'Colour',
+    fill: 'Fill',
+    hatch: 'Hatch',
+    dash: 'Line',
+  };
+
+  /** Runs the picked changes one after the other; stops at the first failure. */
+  const applyPlan = () => {
+    if (!plan || !steps(plan).length) {
+      setPlan(null);
+      return;
+    }
+    const p = plan;
+    setPlan(null);
+    run(async ready => {
+      const done: string[] = [];
+      for (const k of steps(p)) {
+        const res = await stepAction(k, p)(ready);
+        if (!res.ok) {
+          const before = done.length ? ` (done: ${done.join(', ')})` : '';
+          return {
+            ok: false,
+            message: `${STEP_NAME[k]}: ${res.message}${before}`,
+          };
+        }
+        done.push(STEP_NAME[k]);
+      }
+      return {ok: true, message: 'Done.'};
+    });
+  };
+
+  /** Props of an option: a tap applies it (or picks it while picking), a long press starts picking. */
+  const option = <K extends PlanKey>(
+    k: K,
+    value: NonNullable<Plan[K]>,
+    now: () => void,
+  ) => ({
+    onPress: () => (plan ? setPlan(toggle(plan, k, value)) : now()),
+    onLongPress: () => setPlan(toggle(plan ?? {}, k, value)),
+    delayLongPress: 450,
+  });
+  const picked = <K extends PlanKey>(k: K, value: Plan[K]) =>
+    isPicked(plan, k, value) && styles.picked;
+
   const pen = summary?.penWidth;
 
   if (working) {
@@ -284,6 +350,23 @@ function App(): React.JSX.Element {
       <ScrollView style={styles.card} contentContainerStyle={styles.content}>
         <View style={styles.header}>
           <Text style={styles.title}>Palette</Text>
+          {plan ? (
+            <View style={styles.planBar}>
+              <Pressable
+                style={styles.cancel}
+                hitSlop={8}
+                onPress={() => setPlan(null)}>
+                <Text style={styles.cancelText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.applyBtn, !steps(plan).length && styles.dim]}
+                onPress={applyPlan}>
+                <Text style={styles.applyText}>
+                  Apply{steps(plan).length ? ` (${steps(plan).length})` : ''}
+                </Text>
+              </Pressable>
+            </View>
+          ) : null}
           <Pressable
             onPress={() => PluginManager.closePluginView()}
             style={styles.close}
@@ -296,8 +379,14 @@ function App(): React.JSX.Element {
           {PRESETS_MM.map(mm => (
             <Pressable
               key={mm}
-              style={[styles.size, busy && styles.dim]}
-              onPress={() => apply({width: toInternal(mm)})}>
+              style={[
+                styles.size,
+                busy && styles.dim,
+                picked('width', toInternal(mm)),
+              ]}
+              {...option('width', toInternal(mm), () =>
+                apply({width: toInternal(mm)}),
+              )}>
               <View
                 style={[
                   styles.sample,
@@ -308,8 +397,15 @@ function App(): React.JSX.Element {
             </Pressable>
           ))}
           <Pressable
-            style={[styles.size, styles.penCell, (busy || !pen) && styles.dim]}
-            onPress={() => pen && apply({width: pen})}>
+            style={[
+              styles.size,
+              styles.penCell,
+              (busy || !pen) && styles.dim,
+              !!pen && picked('width', pen),
+            ]}
+            {...(pen
+              ? option('width', pen, () => apply({width: pen}))
+              : {onPress: () => {}})}>
             <Text style={styles.penText}>= pen</Text>
             <Text style={styles.penSub}>{pen ? formatMm(pen) : '—'}</Text>
           </Pressable>
@@ -321,8 +417,12 @@ function App(): React.JSX.Element {
           {PEN_COLORS.map(c => (
             <Pressable
               key={c.value}
-              style={[styles.tool, busy && styles.dim]}
-              onPress={() => apply({color: c.value})}>
+              style={[
+                styles.tool,
+                busy && styles.dim,
+                picked('color', c.value),
+              ]}
+              {...option('color', c.value, () => apply({color: c.value}))}>
               <View style={[styles.swatch, {backgroundColor: c.swatch}]} />
             </Pressable>
           ))}
@@ -332,8 +432,8 @@ function App(): React.JSX.Element {
           {DASH_STYLES.map(d => (
             <Pressable
               key={d}
-              style={[styles.tool, busy && styles.dim]}
-              onPress={() => run(ready => applyDashes(d, ready))}>
+              style={[styles.tool, busy && styles.dim, picked('dash', d)]}
+              {...option('dash', d, () => run(ready => applyDashes(d, ready)))}>
               <DashIcon dash={d} />
             </Pressable>
           ))}
@@ -361,8 +461,10 @@ function App(): React.JSX.Element {
           {HATCHES.map(f => (
             <Pressable
               key={JSON.stringify(f)}
-              style={[styles.tool, busy && styles.dim]}
-              onPress={() => run(ready => applyFill(f, ready, density))}>
+              style={[styles.tool, busy && styles.dim, picked('hatch', f)]}
+              {...option('hatch', f, () =>
+                run(ready => applyFill(f, ready, density)),
+              )}>
               <FillIcon fill={f} />
             </Pressable>
           ))}
@@ -372,15 +474,17 @@ function App(): React.JSX.Element {
           {FILLS.map(f => (
             <Pressable
               key={JSON.stringify(f)}
-              style={[styles.tool, busy && styles.dim]}
-              onPress={() => run(ready => applyFill(f, ready))}>
+              style={[styles.tool, busy && styles.dim, picked('fill', f)]}
+              {...option('fill', f, () => run(ready => applyFill(f, ready)))}>
               <FillIcon fill={f} />
             </Pressable>
           ))}
         </ToolRow>
 
         <Text style={styles.info} numberOfLines={1}>
-          {describe(summary)}
+          {plan
+            ? 'Picking: tap options to add or remove them, then Apply.'
+            : describe(summary)}
         </Text>
       </ScrollView>
       {/* The note around the panel: a tap there closes it. */}
@@ -493,6 +597,19 @@ const styles = StyleSheet.create({
     backgroundColor: '#9d9d9d',
   },
   dim: {opacity: 0.4},
+  // A picked option: a thick black outline.
+  picked: {borderWidth: 6},
+  planBar: {flexDirection: 'row', alignItems: 'center', marginLeft: 'auto'},
+  cancel: {paddingHorizontal: 14, paddingVertical: 8, marginRight: 12},
+  cancelText: {fontSize: 20, color: '#000000'},
+  applyBtn: {
+    paddingHorizontal: 22,
+    paddingVertical: 8,
+    marginRight: 24,
+    backgroundColor: '#000000',
+    borderRadius: 10,
+  },
+  applyText: {fontSize: 20, fontWeight: '700', color: '#ffffff'},
   info: {fontSize: 14, color: '#555555', marginTop: 2},
   workingLayer: {
     flex: 1,
