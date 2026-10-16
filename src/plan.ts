@@ -39,12 +39,8 @@ export const isPicked = <K extends PlanKey>(
 ) => !!plan && plan[key] !== undefined && same(plan[key], value);
 
 /**
- * The order the changes are applied in, whatever the order they were picked:
- * - width and colour first, so the fill fits the final outline and the dashes
- *   take the final width and colour;
- * - fill before hatching, so the hatching shows on top of it;
- * - dashes last: they replace the originals (the selection is gone after
- *   them), and a fill or hatching would leak through their gaps.
+ * The picked changes, in a fixed order (what is applied when, and why, is in
+ * applyPlan, effects.ts).
  */
 export const ORDER: PlanKey[] = ['width', 'color', 'fill', 'hatch', 'dash'];
 

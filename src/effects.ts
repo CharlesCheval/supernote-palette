@@ -342,8 +342,8 @@ async function dashes(
  * The final width and colour are set on the elements in memory first, so the
  * fill fits the final outline and the dashes take the final style; every line
  * is computed before the page is touched. Then, in order: width and colour
- * (one write; none when dashed, as the dashes replace the originals), fill and
- * hatching lines, dashes.
+ * (one write; none when dashed, as the dashes replace the originals), dashes
+ * (through the lasso), fill and hatching lines (no lasso needed).
  */
 export const applyPlan = (
   plan: Plan,
@@ -448,25 +448,26 @@ async function planAtOnce(
         : 'colour',
     );
   }
+  if (plan.dash) {
+    // Dashes BEFORE the fill, through the lasso, exactly as the Line action
+    // alone: inserted, then the originals deleted with the lasso. With the fill
+    // first, the lasso had to be let go by the plugin and the originals
+    // deleted by number: the note crashed and lost every change
+    // (0.6.2-test.2), as when the plugin drove the lasso in tests 16-19.
+    const exactly = !releaseAfter && all.length === targets.length;
+    const r = await dashElements(targets, plan.dash, size, exactly);
+    if (r.why) {
+      return stop(`Not dashed — ${r.why}`);
+    }
+    done.push('line');
+  }
   if (lines.length) {
+    // Computed beforehand: the fill needs nothing from the lasso.
     const inserted = await insertAll(lines);
     if (inserted < lines.length) {
       return stop(
         `Only ${inserted} of ${lines.length} fill lines could be drawn.`,
       );
-    }
-    done.push(
-      plan.fill && plan.hatch ? 'fill, hatch' : plan.fill ? 'fill' : 'hatch',
-    );
-  }
-  if (plan.dash) {
-    // Through the lasso only if nothing was added meanwhile; else by number
-    // (added lines are appended: the originals keep their numbers).
-    const exactly =
-      !releaseAfter && all.length === targets.length && !lines.length;
-    const r = await dashElements(targets, plan.dash, size, exactly);
-    if (r.why) {
-      return stop(`Not dashed — ${r.why}`);
     }
   }
   return {ok: true, message: 'Done.'};

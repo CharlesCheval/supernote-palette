@@ -139,9 +139,9 @@ test('width + colour + fill on a lone shape: one lasso restyle with both, then t
   expect(mockCalls).toEqual(['lasso restyle 900 157', 'line']);
 });
 
-test('fill + dashes: the fill first, then the dashes, the original deleted by number', async () => {
+test('fill + dashes: dashes through the lasso first (never let go by the plugin), then the fill', async () => {
   const {FILLS} = require('../src/effects');
   const res = await applyPlan({fill: FILLS[1], dash: 'dashed'}, 50);
   expect(res.ok).toBe(true);
-  expect(mockCalls).toEqual(['line', 'let go', 'insert', 'delete 5']);
+  expect(mockCalls).toEqual(['insert', 'lasso delete', 'line']);
 });
