@@ -537,8 +537,8 @@ export async function ensureWriteAccess(): Promise<boolean> {
 }
 
 /** Lasso route for a single selected shape: keeps the undo history. */
-async function applyToLassoShape(
-  change: StyleChange,
+export async function applyToLassoShape(
+  change: StyleChange | StyleChange[],
 ): Promise<{ok: boolean; message: string}> {
   const res: any = await PluginCommAPI.getLassoGeometries();
   const shapes = ok<any[]>(res) ?? [];
@@ -548,8 +548,10 @@ async function applyToLassoShape(
       message: `Could not read the selected shape: ${errorText(res)}`,
     };
   }
+  // Width and colour together: ONE lasso operation.
+  const changes = Array.isArray(change) ? change : [change];
   const shape = {
-    ...restyleGeometry(shapes[0], change),
+    ...changes.reduce((g, c) => restyleGeometry(g, c), shapes[0]),
     showLassoAfterInsert: true,
   };
   if (!actionLive()) {

@@ -17,13 +17,14 @@ import {
   View,
 } from 'react-native';
 import {PluginManager} from 'sn-plugin-lib';
-import {Summary, readSummary} from './src/selection';
+import {Summary, lassoElements, readSummary} from './src/selection';
 import {
   FILLS,
   FillStyle,
   HATCHES,
   applyDashes,
   applyFill,
+  applyPlan,
   applyStyleEverywhere,
 } from './src/effects';
 import {DASH_STYLES, DashStyle} from './src/patterns';
@@ -262,62 +263,34 @@ function App(): React.JSX.Element {
       return; // the panel was opened again meanwhile: this result is old news
     }
     setWorking(false);
-    if (failure) {
-      setToast(failure);
-    } else {
+    if (!failure) {
       PluginManager.closePluginView();
+      return;
+    }
+    setToast(failure);
+    // Nothing selected any more: nothing else can be done from the panel, so
+    // it closes once the message has been read.
+    if ((await lassoElements()).error) {
+      setTimeout(() => {
+        if (actionLive()) {
+          PluginManager.closePluginView();
+        }
+      }, TOAST_MS);
     }
   };
 
   const apply = (change: StyleChange) =>
     run(ready => applyStyleEverywhere(change, ready));
 
-  /** One change, applied at once (`run` is not called here). */
-  const stepAction = (k: PlanKey, p: Plan): Action => {
-    switch (k) {
-      case 'width':
-        return ready => applyStyleEverywhere({width: p.width!}, ready);
-      case 'color':
-        return ready => applyStyleEverywhere({color: p.color!}, ready);
-      case 'fill':
-        return ready => applyFill(p.fill!, ready);
-      case 'hatch':
-        return ready => applyFill(p.hatch!, ready, density);
-      case 'dash':
-        return ready => applyDashes(p.dash!, ready);
-    }
-  };
-  const STEP_NAME: Record<PlanKey, string> = {
-    width: 'Width',
-    color: 'Colour',
-    fill: 'Fill',
-    hatch: 'Hatch',
-    dash: 'Line',
-  };
-
-  /** Runs the picked changes one after the other; stops at the first failure. */
-  const applyPlan = () => {
+  /** Runs the picked changes together, from one reading of the selection. */
+  const applyPicked = () => {
     if (!plan || !steps(plan).length) {
       setPlan(null);
       return;
     }
     const p = plan;
     setPlan(null);
-    run(async ready => {
-      const done: string[] = [];
-      for (const k of steps(p)) {
-        const res = await stepAction(k, p)(ready);
-        if (!res.ok) {
-          const before = done.length ? ` (done: ${done.join(', ')})` : '';
-          return {
-            ok: false,
-            message: `${STEP_NAME[k]}: ${res.message}${before}`,
-          };
-        }
-        done.push(STEP_NAME[k]);
-      }
-      return {ok: true, message: 'Done.'};
-    });
+    run(ready => applyPlan(p, density, ready));
   };
 
   /** Props of an option: a tap applies it (or picks it while picking), a long press starts picking. */
@@ -360,7 +333,7 @@ function App(): React.JSX.Element {
               </Pressable>
               <Pressable
                 style={[styles.applyBtn, !steps(plan).length && styles.dim]}
-                onPress={applyPlan}>
+                onPress={applyPicked}>
                 <Text style={styles.applyText}>
                   Apply{steps(plan).length ? ` (${steps(plan).length})` : ''}
                 </Text>

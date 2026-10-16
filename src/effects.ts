@@ -16,7 +16,9 @@ import {areaSegments, enclosedArea} from './regions';
 import {Ink, hatchFill, solidFill} from './inkfill';
 import {PerfectShape, contourWidth, convexClosed, exactFill} from './exactfill';
 import {
+  applyToLassoShape,
   ensureWriteAccess,
+  forPageWrite,
   errorText,
   PDF_LIMIT,
   applyStyle,
@@ -30,7 +32,8 @@ import {
   release,
 } from './selection';
 import {getSettings} from './settings';
-import {StyleChange} from './style';
+import {StyleChange, restyle} from './style';
+import {Plan} from './plan';
 import {trace, traceStart} from './trace';
 import {ABANDONED, actionLive} from './session';
 import {
@@ -329,6 +332,146 @@ async function dashes(
     : {ok: true, message: 'Dashed.'};
 }
 
+/**
+ * Several changes picked together (width, colour, fill, hatching, dashes),
+ * applied from ONE reading of the selection. Applied one after the other, each
+ * change read the lasso again, and after a lone shape's width and colour
+ * (lasso operations) the lasso could be gone: the dashes then found "No lasso
+ * selection" (0.6.2-test.1).
+ *
+ * The final width and colour are set on the elements in memory first, so the
+ * fill fits the final outline and the dashes take the final style; every line
+ * is computed before the page is touched. Then, in order: width and colour
+ * (one write; none when dashed, as the dashes replace the originals), fill and
+ * hatching lines, dashes.
+ */
+export const applyPlan = (
+  plan: Plan,
+  density: number,
+  onReady: OnReady = () => {},
+): Promise<Result> => thenRelease(planAtOnce(plan, density, onReady));
+
+async function planAtOnce(
+  plan: Plan,
+  density: number,
+  onReady: OnReady,
+): Promise<Result> {
+  traceStart(`Plan ${Object.keys(plan).join('+')}`);
+  const pdf = await isPdf();
+  if (pdf && plan.dash) {
+    return {ok: false, message: PDF_LIMIT};
+  }
+  const {all, targets, error} = await selection();
+  if (error || !targets.length) {
+    release(all);
+    return {
+      ok: false,
+      message: error ?? 'The selection has no strokes or shapes.',
+    };
+  }
+  const changes: StyleChange[] = [
+    ...(plan.width !== undefined ? [{width: plan.width}] : []),
+    ...(plan.color !== undefined ? [{color: plan.color}] : []),
+  ];
+  // A lone shape alone in the lasso: restyled through the lasso (keeps undo).
+  const loneShape =
+    !releaseAfter &&
+    all.length === 1 &&
+    targets.length === 1 &&
+    isShape(targets[0]);
+  const restyleWrite = changes.length > 0 && !plan.dash;
+  if (restyleWrite && pdf && !loneShape) {
+    return {ok: false, message: PDF_LIMIT};
+  }
+  if (
+    (plan.dash || (restyleWrite && !loneShape)) &&
+    !(await ensureWriteAccess())
+  ) {
+    return {
+      ok: false,
+      message:
+        'File access denied: allow it ("Always allow") to change the selection.',
+    };
+  }
+  onReady();
+  const size = await pageSize();
+  for (const e of targets) {
+    changes.forEach(c => restyle(e, c));
+  }
+  const lines: object[] = [];
+  for (const [fill, name] of [
+    [plan.fill, 'Fill'],
+    [plan.hatch, 'Hatch'],
+  ] as const) {
+    if (fill) {
+      const r = await fillLinesFor(targets, fill, size, density);
+      if ('error' in r) {
+        return {ok: false, message: `${name}: ${r.error} Nothing changed.`};
+      }
+      lines.push(...r.lines);
+    }
+  }
+  if (!actionLive()) {
+    return ABANDONED;
+  }
+  const done: string[] = [];
+  const stop = (why: string): Result => ({
+    ok: false,
+    message: done.length ? `${why} (done: ${done.join(', ')})` : why,
+  });
+  if (restyleWrite) {
+    if (loneShape) {
+      const r = await applyToLassoShape(changes);
+      if (!r.ok) {
+        return stop(r.message);
+      }
+    } else {
+      const page =
+        ok<number>(await PluginCommAPI.getCurrentPageNum()) ??
+        targets[0].pageNum;
+      // The fill lines are already computed: the radii can be halved for the write.
+      targets.forEach(forPageWrite);
+      const res: any = await PluginCommAPI.modifyPageElements(targets, page);
+      const changed = ok<number[]>(res);
+      trace(
+        `modify: ${targets.length} el. → ${changed ? 'ok' : errorText(res)}`,
+      );
+      if (!changed) {
+        return stop(`Could not change the selection: ${errorText(res)}`);
+      }
+    }
+    done.push(
+      changes.length > 1
+        ? 'width, colour'
+        : 'width' in changes[0]
+        ? 'width'
+        : 'colour',
+    );
+  }
+  if (lines.length) {
+    const inserted = await insertAll(lines);
+    if (inserted < lines.length) {
+      return stop(
+        `Only ${inserted} of ${lines.length} fill lines could be drawn.`,
+      );
+    }
+    done.push(
+      plan.fill && plan.hatch ? 'fill, hatch' : plan.fill ? 'fill' : 'hatch',
+    );
+  }
+  if (plan.dash) {
+    // Through the lasso only if nothing was added meanwhile; else by number
+    // (added lines are appended: the originals keep their numbers).
+    const exactly =
+      !releaseAfter && all.length === targets.length && !lines.length;
+    const r = await dashElements(targets, plan.dash, size, exactly);
+    if (r.why) {
+      return stop(`Not dashed — ${r.why}`);
+    }
+  }
+  return {ok: true, message: 'Done.'};
+}
+
 /** Hatching / fill spacing and line width (px) for each fill style. */
 function fillPlan(fill: FillStyle, outlineWidth: number, density: number) {
   if (!('hatch' in fill)) {
@@ -366,31 +509,43 @@ async function fills(
   }
   onReady();
   const size = await pageSize();
+  const r = await fillLinesFor(targets, fill, size, density);
+  release(all);
+  if ('error' in r) {
+    return {ok: false, message: r.error};
+  }
+  const done = await insertAll(r.lines);
+  if (done < r.lines.length) {
+    return {
+      ok: false,
+      message: `Only ${done} of ${r.lines.length} lines could be drawn.`,
+    };
+  }
+  return {ok: true, message: 'hatch' in fill ? 'Hatched.' : 'Filled.'};
+}
+
+/**
+ * The lines that fill or hatch the inside of the given strokes and shapes,
+ * computed from them as they are in memory (nothing is read from the lasso,
+ * nothing is written).
+ */
+async function fillLinesFor(
+  targets: Element[],
+  fill: FillStyle,
+  size: Size | null,
+  density: number,
+): Promise<{lines: object[]} | {error: string}> {
   // Solid fill: up to the real ink of the outline, with a smooth edge.
   if (!('hatch' in fill)) {
     const lines = await solidLines(targets, fill, size);
     if (lines) {
-      release(all);
-      const inserted = await insertAll(lines);
-      return inserted < lines.length
-        ? {
-            ok: false,
-            message: `Only ${inserted} of ${lines.length} lines could be drawn.`,
-          }
-        : {ok: true, message: 'Filled.'};
+      return {lines};
     }
     // Nothing enclosed found this way: the former method below decides.
   } else {
     const lines = await hatchLines(targets, fill, size, density);
     if (lines) {
-      release(all);
-      const inserted = await insertAll(lines);
-      return inserted < lines.length
-        ? {
-            ok: false,
-            message: `Only ${inserted} of ${lines.length} lines could be drawn.`,
-          }
-        : {ok: true, message: 'Hatched.'};
+      return {lines};
     }
   }
   // Visible pieces of every selected stroke / shape: a partly erased stroke
@@ -419,7 +574,6 @@ async function fills(
       unreadable.push(await describeElement(e));
     }
   }
-  release(all);
   const closed = pieces.map(o => closedOutline(o.points));
   const lines: object[] = [];
   if (pieces.length && !erased && !drawn && closed.every(Boolean)) {
@@ -445,20 +599,12 @@ async function fills(
         : '',
     ].filter(Boolean);
     return {
-      ok: false,
-      message: `Nothing closed to fill: close the outline and try again. (${seen.join(
+      error: `Nothing closed to fill: close the outline and try again. (${seen.join(
         ' · ',
       )})`,
     };
   }
-  const done = await insertAll(lines);
-  if (done < lines.length) {
-    return {
-      ok: false,
-      message: `Only ${done} of ${lines.length} lines could be drawn.`,
-    };
-  }
-  return {ok: true, message: 'Filled.'};
+  return {lines};
 }
 
 /** Fill lines: ≈ 0.7 mm, 5 px apart, always drawn with the fineliner (uniform). */
