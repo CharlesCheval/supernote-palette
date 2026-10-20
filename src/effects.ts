@@ -199,8 +199,10 @@ async function dashElements(
   dash: DashStyle,
   size: Size | null,
   lassoHoldsExactly: boolean,
+  // Other lines (fill, hatching) inserted in the SAME call, below the dashes.
+  extra: object[] = [],
 ): Promise<{done: number; why?: string}> {
-  const pieces: object[] = [];
+  const pieces: object[] = [...extra];
   for (const e of elements) {
     const o = await outlineOf(e, size);
     if (!o) {
@@ -227,7 +229,7 @@ async function dashElements(
       pieces.push(geometry(arrow.head, o.style));
     }
   }
-  if (!pieces.length) {
+  if (pieces.length === extra.length) {
     return {done: 0, why: 'could not read the selection'};
   }
   const page =
@@ -449,17 +451,18 @@ async function planAtOnce(
     );
   }
   if (plan.dash) {
-    // Dashes BEFORE the fill, through the lasso, exactly as the Line action
-    // alone: inserted, then the originals deleted with the lasso. With the fill
-    // first, the lasso had to be let go by the plugin and the originals
-    // deleted by number: the note crashed and lost every change
-    // (0.6.2-test.2), as when the plugin drove the lasso in tests 16-19.
+    // Exactly as the Line action alone, the fill and hatching lines riding
+    // along: ONE insertion (fill lines, then dashes), then the originals
+    // deleted with the lasso. Measured crashes of the note: with the fill
+    // inserted first and the originals deleted by number after the plugin let
+    // the lasso go (0.6.2-test.2); with the fill inserted in a second call
+    // after the lasso deletion (0.6.2-test.3, at the end).
     const exactly = !releaseAfter && all.length === targets.length;
-    const r = await dashElements(targets, plan.dash, size, exactly);
+    const r = await dashElements(targets, plan.dash, size, exactly, lines);
     if (r.why) {
       return stop(`Not dashed — ${r.why}`);
     }
-    done.push('line');
+    return {ok: true, message: 'Done.'};
   }
   if (lines.length) {
     // Computed beforehand: the fill needs nothing from the lasso.
