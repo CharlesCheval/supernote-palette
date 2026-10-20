@@ -23,7 +23,9 @@ A centred dialog sized to its content (`regionType` 1, 1440×1240 px; if the hos
 - **Fill**: solid white, light gray, dark gray or black.
 - A one-line **summary** of the selection: strokes, shapes, current widths and colours.
 
-Tap outside the panel to close it. While a long action runs (a large fill takes seconds on the device), a small **Working…** box shows; an action is stopped after 120 s. Errors show in a bubble that fades after 4 s.
+**Several changes at once:** a long press on any option starts picking: tap options to add or remove them (one per row), then **Apply (n)**; **Cancel** drops the picks. They are applied together from one reading of the selection, in a fixed order whatever the order picked: the final width and colour are set first (so the fill fits the final outline and the dashes take the final style), then the fill and hatching lines, then the dashes. With dashes, everything goes in ONE insertion followed by one deletion of the originals through the lasso, exactly as the Line action alone (two writes after the lasso deletion, or the plugin letting the lasso go, made the note crash in tests).
+
+Tap outside the panel to close it. While a long action runs (a large fill takes seconds on the device), a small **Working…** box shows; an action is stopped after 120 s. Errors show in a bubble that fades after 4 s; when nothing is selected any more, the panel then closes.
 
 The hatch density is saved across restarts (as a folder name in the plugin directory, `src/settings.ts`: the SDK cannot write text files).
 
@@ -86,12 +88,7 @@ npx jest
 
 ## Releasing
 
-Bump `versionName` **and** `versionCode` in `PluginConfig.json` (the device only upgrades when `versionCode` increases), commit, then push a matching tag:
-
-```bash
-git tag v<versionName>
-git push origin v<versionName>
-```
+Bump `versionName` **and** `versionCode` in `PluginConfig.json` (the device only upgrades when `versionCode` increases), commit, then push a matching tag (`git tag v<versionName> && git push origin v<versionName>`), or run the **Release** workflow by hand on `main` (Actions → Release → Run workflow): the tag is then made from `versionName`.
 
 GitHub Actions runs the tests, builds the plugin and attaches it to the release as `Palette.snplg`.
 
