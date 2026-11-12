@@ -70,8 +70,14 @@ export async function pageSize(): Promise<Size | null> {
       path && page != null
         ? ok<Size>(await PluginFileAPI.getPageSize(path, page))
         : null;
+    // Only a page of another size in the same orientation: a rotated display
+    // (landscape) with a portrait page size must keep the display size alone,
+    // as before.
+    const sameOrientation =
+      validSize(own) && own.width < own.height === size.width < size.height;
     if (
       validSize(own) &&
+      sameOrientation &&
       (own.width !== size.width || own.height !== size.height)
     ) {
       size.page = {width: own.width, height: own.height};
@@ -91,7 +97,7 @@ export async function pageSize(): Promise<Size | null> {
  * calibrate(): the one that puts the strokes inside the lasso rect.
  */
 export type EmrMode = 'scaled' | 'page' | 'display';
-let emrMode: EmrMode = 'scaled';
+let emrMode: EmrMode = 'display';
 
 /** What the last calibration measured, shown in the panel (test builds). */
 export let lastCalibration = '';
@@ -115,7 +121,7 @@ export function emrToPage(p: P, size: Size): P {
   try {
     return convert(p, size, emrMode);
   } catch {
-    return convert(p, size, 'scaled'); // page size unknown to PointUtils
+    return convert(p, size, 'display'); // page size unknown to PointUtils
   }
 }
 
@@ -147,7 +153,8 @@ export async function calibrate(
   elements: Element[],
   size: Size | null,
 ): Promise<void> {
-  emrMode = 'scaled';
+  // The conversion of Palette 0.6.2 unless another one clearly fits better.
+  emrMode = 'display';
   if (!size?.page) {
     lastCalibration = size ? `page = display ${size.width}×${size.height}` : '';
     return;
@@ -176,6 +183,7 @@ export async function calibrate(
       )}`,
     );
     let best: {mode: EmrMode; out: number} | null = null;
+    let displayOut = 0;
     for (const mode of ['scaled', 'page', 'display'] as EmrMode[]) {
       try {
         const b = boxOf(sample.map(p => convert(p, size, mode)));
@@ -183,6 +191,9 @@ export async function calibrate(
         parts.push(
           `${mode} ${r0(b.left)},${r0(b.top)}–${r0(b.right)},${r0(b.bottom)}`,
         );
+        if (mode === 'display') {
+          displayOut = out;
+        }
         if (!best || out < best.out) {
           best = {mode, out};
         }
@@ -190,10 +201,17 @@ export async function calibrate(
         parts.push(`${mode} n/a`);
       }
     }
-    if (best) {
+    // Another conversion only when the display one sticks out of the lasso
+    // and the other fits clearly better.
+    if (
+      best &&
+      best.mode !== 'display' &&
+      displayOut > 20 &&
+      best.out < displayOut / 2
+    ) {
       emrMode = best.mode;
-      parts.push(`→ ${best.mode}`);
     }
+    parts.push(`→ ${emrMode}`);
   } catch (e: any) {
     parts.push(`calibration error ${e?.message ?? e}`);
   }

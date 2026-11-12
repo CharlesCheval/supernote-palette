@@ -28,10 +28,12 @@ test('an A6X page on a Manta: screen pixels scaled to the page (measured with Sn
   expect(q.y).toBeCloseTo(561.6, 1);
 });
 
-test('EMR to page pixels: display conversion, then the page scale only when it differs', () => {
+test('EMR to page pixels: without a calibration, exactly as Palette 0.6.2 (display size)', () => {
   expect(emrToPage({x: 5670, y: 7680}, {width: 1920, height: 2560})).toEqual({x: 567, y: 768});
-  const q = emrToPage({x: 5670, y: 7680}, {width: 1920, height: 2560, page: {width: 1404, height: 1872}});
-  expect(q.x).toBeCloseTo(414.6, 1);
+  expect(emrToPage({x: 5670, y: 7680}, {width: 1920, height: 2560, page: {width: 1404, height: 1872}})).toEqual({
+    x: 567,
+    y: 768,
+  });
 });
 
 test('calibration score: how far a box sticks out of the lasso rect', () => {
