@@ -29,9 +29,12 @@ test('an A6X page on a Manta: screen pixels scaled to the page (measured with Sn
   expect(q.y).toBeCloseTo(561.6, 1);
 });
 
-test('EMR to page pixels: without a calibration, exactly as Palette 0.6.2 (display size)', () => {
+test('EMR to page pixels: display conversion, scaled to a page of another size (as Snap)', () => {
   expect(emrToPage({x: 5670, y: 7680}, {width: 1920, height: 2560})).toEqual({x: 567, y: 768});
-  expect(emrToPage({x: 5670, y: 7680}, {width: 1920, height: 2560, page: {width: 1404, height: 1872}})).toEqual({
+  const q = emrToPage({x: 5670, y: 7680}, {width: 1920, height: 2560, page: {width: 1404, height: 1872}});
+  expect(q.x).toBeCloseTo(414.6, 1);
+  // A page size in the other orientation is ignored.
+  expect(emrToPage({x: 5670, y: 7680}, {width: 1920, height: 2560, page: {width: 2560, height: 1920}})).toEqual({
     x: 567,
     y: 768,
   });
@@ -43,22 +46,48 @@ test('calibration score: how far a box sticks out of the lasso rect', () => {
   expect(overflow({left: 50, top: 110, right: 560, bottom: 390}, lasso)).toBe(110);
 });
 
-test('landscape Manta note: a circle read at 3/4 of its place is scaled to the lasso (measured)', async () => {
-  // Read back in portrait page pixels: centre (1051, 1195), radius 100 (fields hold twice).
-  const circle: any = {
-    type: 700,
-    geometry: {type: 'GEO_circle', ellipseCenterPoint: {x: 1051, y: 1195}, ellipseMajorAxisRadius: 200, ellipseMinorAxisRadius: 200, ellipseAngle: 0, penWidth: 300, penColor: 0, penType: 10},
-  };
-  const size = {width: 2560, height: 3414};
-  // The lasso around it where it shows: 4/3 of the read place.
-  mockRect = {left: ((1051 - 100) * 4) / 3 - 10, top: ((1195 - 100) * 4) / 3 - 10, right: ((1051 + 100) * 4) / 3 + 10, bottom: ((1195 + 100) * 4) / 3 + 10};
-  await calibrate([circle], size);
-  const o = await outlineOf(circle, size);
-  const xs = o!.points.map(p => p.x);
-  expect(Math.min(...xs)).toBeCloseTo(((1051 - 100) * 4) / 3, 0);
-  // Back to a selection where read and lasso agree: no scaling.
+const circle: any = {
+  type: 700,
+  geometry: {type: 'GEO_circle', ellipseCenterPoint: {x: 1051, y: 1195}, ellipseMajorAxisRadius: 200, ellipseMinorAxisRadius: 200, ellipseAngle: 0, penWidth: 300, penColor: 0, penType: 10},
+};
+const landscape = {width: 2560, height: 3414};
+
+test('landscape Manta note, a circle alone: scaled by 4/3 (measured: dashes at 3/4)', async () => {
   mockRect = {left: 941, top: 1085, right: 1161, bottom: 1305};
-  await calibrate([circle], size);
-  const o2 = await outlineOf(circle, size);
-  expect(Math.min(...o2!.points.map(p => p.x))).toBeCloseTo(951, 0);
+  await calibrate([circle], landscape);
+  const o = await outlineOf(circle, landscape);
+  expect(Math.min(...o!.points.map(p => p.x))).toBeCloseTo((951 * 4) / 3, 0);
+});
+
+test('a circle alone on a portrait page: unchanged', async () => {
+  const portrait = {width: 1920, height: 2560};
+  await calibrate([circle], portrait);
+  const o = await outlineOf(circle, portrait);
+  expect(Math.min(...o!.points.map(p => p.x))).toBeCloseTo(951, 0);
+});
+
+test('landscape Manta note, a stroke: left as converted, shapes scaled by the lasso (measured)', async () => {
+  // Measured: the stroke converted with the display size at x 282–769, y 1279–1650,
+  // the lasso rect at 206,954–584,1244 (3/4 of it).
+  const pts = [{x: 282, y: 1279}, {x: 769, y: 1650}];
+  const stroke: any = {
+    type: 0,
+    stroke: {points: {size: async () => 2, getRange: async () => pts.map(p => ({x: p.x * 10, y: p.y * 10}))}},
+  };
+  // A small circle inside the lasso, read like the lasso rect: centre (400, 1100), radius 50.
+  const small: any = {
+    type: 700,
+    geometry: {...circle.geometry, ellipseCenterPoint: {x: 400, y: 1100}, ellipseMajorAxisRadius: 100, ellipseMinorAxisRadius: 100},
+  };
+  mockRect = {left: 206, top: 954, right: 584, bottom: 1244};
+  await calibrate([stroke, small], landscape);
+  const so = await outlineOf(stroke, landscape);
+  expect(so!.points[0]).toEqual({x: 282, y: 1279});
+  const co = await outlineOf(small, landscape);
+  expect(Math.min(...co!.points.map(p => p.x))).toBeCloseTo((350 * 4) / 3, 0);
+  // The same stroke on a portrait page, the lasso where it is: nothing scaled.
+  mockRect = {left: 275, top: 1270, right: 776, bottom: 1660};
+  const portrait = {width: 1920, height: 2560};
+  await calibrate([stroke], portrait);
+  expect((await outlineOf(stroke, portrait))!.points[0]).toEqual({x: 282, y: 1279});
 });

@@ -86,44 +86,34 @@ export async function pageSize(): Promise<Size | null> {
 }
 
 /**
- * How a page from another device stores its strokes' EMR points is not known
- * for sure: Snap measured that live strokes follow the screen ("scaled":
- * display conversion, then page scale), but Palette reads strokes saved in
- * the note, and with that conversion its dashes still landed elsewhere on an
- * A6X note on a Manta. So the conversion is chosen per selection, by
- * calibrate(): the one that puts the strokes inside the lasso rect.
+ * Coordinates, as measured on a Manta (its own notes in portrait and in
+ * landscape, an A6X note):
+ * - new elements are written in the page size the host reports
+ *   (PluginFileAPI.getPageSize; 2560×3414 for a Manta note in landscape);
+ * - stroke EMR points follow the screen: converted with the display size,
+ *   then scaled to that page size when it differs in the same orientation
+ *   (an A6X page, as in Snap);
+ * - shapes and the lasso rect are read in the note's own page pixels, which
+ *   differ in landscape: a circle and the lasso rect came back at 3/4 of the
+ *   strokes' and of where things are written. Shapes are scaled by
+ *   shapeScale, set by calibrate().
  */
-export type EmrMode = 'scaled' | 'page' | 'display';
-let emrMode: EmrMode = 'display';
+let shapeScale = 1;
 
 /** What the last calibration measured, shown in the panel (test builds). */
 export let lastCalibration = '';
 
-function convert(p: P, size: Size, mode: EmrMode): P {
-  const display = {width: size.width, height: size.height};
-  if (!size.page || mode === 'display') {
-    return PointUtils.emrPoint2Android(p, display);
-  }
-  if (mode === 'page') {
-    return PointUtils.emrPoint2Android(p, {
-      width: Math.round(size.page.width),
-      height: Math.round(size.page.height),
-    });
-  }
-  // Scaling the screen to the page only makes sense in the same orientation.
-  if (size.page.width < size.page.height !== size.width < size.height) {
-    throw new Error('scaled: page and display in different orientations');
-  }
-  return screenToPage(PointUtils.emrPoint2Android(p, display), size, size.page);
-}
-
-/** An EMR point in page pixels, with the conversion calibrate() chose. */
+/** An EMR point in the pixels new elements are written in. */
 export function emrToPage(p: P, size: Size): P {
-  try {
-    return convert(p, size, emrMode);
-  } catch {
-    return convert(p, size, 'display'); // page size unknown to PointUtils
+  const q = PointUtils.emrPoint2Android(p, {
+    width: size.width,
+    height: size.height,
+  });
+  const page = size.page;
+  if (!page || page.width < page.height !== size.width < size.height) {
+    return q;
   }
+  return screenToPage(q, size, page);
 }
 
 type Box = {left: number; top: number; right: number; bottom: number};
@@ -133,6 +123,13 @@ const boxOf = (pts: P[]): Box => ({
   top: Math.min(...pts.map(p => p.y)),
   right: Math.max(...pts.map(p => p.x)),
   bottom: Math.max(...pts.map(p => p.y)),
+});
+
+const scaleBox = (b: Box, k: number): Box => ({
+  left: b.left * k,
+  top: b.top * k,
+  right: b.right * k,
+  bottom: b.bottom * k,
 });
 
 /** How far a box sticks out of another (0 when inside). */
@@ -145,153 +142,94 @@ export function overflow(b: Box, r: Box): number {
   );
 }
 
+/** How far apart two boxes' edges are. */
+export function edgeGap(a: Box, b: Box): number {
+  return (
+    Math.abs(a.left - b.left) +
+    Math.abs(a.right - b.right) +
+    Math.abs(a.top - b.top) +
+    Math.abs(a.bottom - b.bottom)
+  );
+}
+
 /** Ratios between the page sizes in use (portrait and landscape, Manta and A5X/A6X). */
-const SCALES = [
-  1,
-  4 / 3,
-  3 / 4,
-  1920 / 1404,
-  1404 / 1920,
-  2560 / 1404,
-  1404 / 2560,
+const SCALES = [1, 4 / 3, 3 / 4, 1920 / 1404, 1404 / 1920];
+
+/** Page sizes the host reports in landscape (a portrait page widened to the screen). */
+const LANDSCAPE_PAGES = [
+  {width: 2560, height: 3414},
+  {width: 1872, height: 2496},
 ];
 
 /**
- * The factor from read to written coordinates (readScale): the one that puts
- * the selection's outlines inside the lasso rect, 1 unless another clearly
- * fits better. Scaling is about the page origin, as measured.
- */
-async function calibrateScale(
-  elements: Element[],
-  size: Size,
-  rect: Box,
-  parts: string[],
-): Promise<void> {
-  readScale = 1;
-  const pts: P[] = [];
-  for (const e of elements.filter(x => isStroke(x) || isShape(x)).slice(0, 8)) {
-    const o = await rawOutlineOf(e, size);
-    if (o) {
-      pts.push(...o.points);
-    }
-  }
-  if (!pts.length) {
-    parts.push('no outline: scale 1');
-    return;
-  }
-  const b = boxOf(pts);
-  const r0 = Math.round;
-  parts.push(`read ${r0(b.left)},${r0(b.top)}–${r0(b.right)},${r0(b.bottom)}`);
-  const fit = (k: number) =>
-    overflow(
-      {
-        left: b.left * k,
-        top: b.top * k,
-        right: b.right * k,
-        bottom: b.bottom * k,
-      },
-      rect,
-    );
-  const base = fit(1);
-  let best = {k: 1, out: base};
-  for (const k of SCALES) {
-    const out = fit(k);
-    if (out < best.out) {
-      best = {k, out};
-    }
-  }
-  if (best.k !== 1 && base > 20 && best.out < base / 2) {
-    readScale = best.k;
-  }
-  parts.push(`scale ${readScale === 1 ? '1' : readScale.toFixed(3)}`);
-}
-
-/**
- * Chooses the EMR conversion for this selection: among those that can run,
- * the one whose stroke points stick out of the lasso rect the least. Only
- * pages from another device need it; on the device's own pages all agree.
+ * Sets shapeScale for this selection. With strokes in it: the scale that
+ * makes the lasso rect (read like shapes) frame the strokes and the scaled
+ * shapes best, 1 unless another fits clearly better. Without strokes there is
+ * nothing to measure against: 4/3 when the reported page is a landscape one
+ * (measured), else 1.
  */
 export async function calibrate(
   elements: Element[],
   size: Size | null,
 ): Promise<void> {
-  // The conversion of Palette 0.6.2 unless another one clearly fits better.
-  emrMode = 'display';
-  readScale = 1;
+  shapeScale = 1;
   if (!size) {
     lastCalibration = '';
     return;
   }
+  const written = size.page ?? size;
   const parts = [
     `display ${size.width}×${size.height} · page ${
       size.page ? `${size.page.width}×${size.page.height}` : 'same'
     }`,
   ];
+  const r0 = Math.round;
+  const fmt = (b: Box) =>
+    `${r0(b.left)},${r0(b.top)}–${r0(b.right)},${r0(b.bottom)}`;
   try {
-    const rect = ok<Box>(await PluginCommAPI.getLassoRect());
-    if (!rect) {
-      lastCalibration = parts.concat('no lasso rect: unchanged').join(' · ');
-      return;
-    }
-    const stroke = elements.find(e => isStroke(e) && e.stroke);
-    if (!stroke?.stroke) {
-      parts.push(
-        `lasso ${Math.round(rect.left)},${Math.round(rect.top)}–${Math.round(
-          rect.right,
-        )},${Math.round(rect.bottom)}`,
-      );
-      await calibrateScale(elements, size, rect, parts);
-      lastCalibration = parts.join(' · ');
-      return;
-    }
-    const n = await stroke.stroke.points.size();
-    const raw = n ? await stroke.stroke.points.getRange(0, n) : [];
-    const sample = raw.filter(
-      (_, i) => i % Math.max(1, Math.floor(raw.length / 60)) === 0,
-    );
-    const r0 = Math.round;
-    parts.push(
-      `lasso ${r0(rect.left)},${r0(rect.top)}–${r0(rect.right)},${r0(
-        rect.bottom,
-      )}`,
-    );
-    let best: {mode: EmrMode; out: number} | null = null;
-    let displayOut = 0;
-    const modes: EmrMode[] = size.page
-      ? ['display', 'page', 'scaled']
-      : ['display'];
-    for (const mode of modes) {
-      try {
-        const b = boxOf(sample.map(p => convert(p, size, mode)));
-        const out = overflow(b, rect);
-        parts.push(
-          `${mode} ${r0(b.left)},${r0(b.top)}–${r0(b.right)},${r0(b.bottom)}`,
-        );
-        if (mode === 'display') {
-          displayOut = out;
-        }
-        if (!best || out < best.out) {
-          best = {mode, out};
-        }
-      } catch {
-        parts.push(`${mode} n/a`);
+    const strokePts: P[] = [];
+    const shapePts: P[] = [];
+    for (const e of elements.slice(0, 12)) {
+      const o = await rawOutlineOf(e, size);
+      if (o) {
+        (isStroke(e) ? strokePts : shapePts).push(...o.points);
       }
     }
-    // Another conversion only when the display one sticks out of the lasso
-    // and the other fits clearly better.
-    if (
-      best &&
-      best.mode !== 'display' &&
-      displayOut > 20 &&
-      best.out < displayOut / 2
-    ) {
-      emrMode = best.mode;
+    const landscape = LANDSCAPE_PAGES.some(
+      l => l.width === written.width && l.height === written.height,
+    );
+    const rect = ok<Box>(await PluginCommAPI.getLassoRect());
+    if (rect && strokePts.length) {
+      parts.push(`lasso ${fmt(rect)} · strokes ${fmt(boxOf(strokePts))}`);
+      const gap = (k: number) =>
+        edgeGap(
+          boxOf([
+            ...strokePts,
+            ...shapePts.map(p => ({x: p.x * k, y: p.y * k})),
+          ]),
+          scaleBox(rect, k),
+        );
+      const base = gap(1);
+      let best = {k: 1, gap: base};
+      for (const k of SCALES) {
+        const g = gap(k);
+        if (g < best.gap) {
+          best = {k, gap: g};
+        }
+      }
+      if (best.k !== 1 && base > 40 && best.gap < base / 2) {
+        shapeScale = best.k;
+      }
+    } else if (landscape) {
+      shapeScale = 4 / 3;
+      parts.push('no stroke: landscape page');
+    } else {
+      parts.push(rect ? 'no stroke' : 'no lasso rect');
     }
-    parts.push(`→ ${emrMode}`);
-    await calibrateScale(elements, size, rect, parts);
   } catch (e: any) {
     parts.push(`calibration error ${e?.message ?? e}`);
   }
+  parts.push(`shapes ×${shapeScale === 1 ? '1' : shapeScale.toFixed(3)}`);
   lastCalibration = parts.join(' · ');
 }
 
@@ -323,19 +261,10 @@ export function styleOf(e: Element): Style {
   };
 }
 
-/** An element's outline (its centre line) in page pixels, or null when it cannot be read. */
-/**
- * Factor from the coordinates elements are read in to those new elements are
- * written in, set by calibrate(). 1 except when they differ (measured: a Manta
- * note in landscape, page reported 2560×3414: a circle read back in portrait
- * page pixels, its dashes drawn at 3/4 of its place and size).
- */
-let readScale = 1;
-
-/** A point or a length read from an element, in the pixels new elements are written in. */
+/** A point or a length read from a shape, in the pixels new elements are written in. */
 export const scaled = (p: P): P =>
-  readScale === 1 ? p : {x: p.x * readScale, y: p.y * readScale};
-export const scaledLength = (l: number) => l * readScale;
+  shapeScale === 1 ? p : {x: p.x * shapeScale, y: p.y * shapeScale};
+export const scaledLength = (l: number) => l * shapeScale;
 
 /** An element's outline (its centre line) in the pixels new elements are written in. */
 export async function outlineOf(
@@ -343,7 +272,9 @@ export async function outlineOf(
   size: Size | null,
 ): Promise<Outline | null> {
   const o = await rawOutlineOf(e, size);
-  return o && readScale !== 1 ? {...o, points: o.points.map(scaled)} : o;
+  return o && isShape(e) && shapeScale !== 1
+    ? {...o, points: o.points.map(scaled)}
+    : o;
 }
 
 async function rawOutlineOf(
@@ -422,7 +353,7 @@ export async function contourOf(e: Element, size: Size | null): Promise<P[][]> {
     const out: P[][] = [];
     let k = 0;
     for (const l of loops) {
-      out.push(px.slice(k, k + l.length).map(scaled));
+      out.push(px.slice(k, k + l.length));
       k += l.length;
     }
     return out;
