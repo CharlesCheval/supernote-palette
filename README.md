@@ -61,9 +61,13 @@ The native element cache is cleared before every read of the lasso (it could han
 
 In PDF documents, elements deleted or modified through the SDK do not stay that way (measured: they come back later, sometimes elsewhere on the page). Palette therefore only offers what adds lines or goes through the lasso: **fills, hatching, and the width or colour of a single shape**. Dashes and changes to strokes or several elements show *Not available in PDFs (unstable behavior).*
 
-## Pages from another device
+## Pages from another device, and landscape
 
-Pen (EMR) coordinates follow the screen, whatever the page. A page made for another device (an A6X note on a Manta) is scaled to fill the screen, and elements are written in the page's own pixels: stroke points are converted with the display size (`getPageDisplaySize`), then scaled by page / display (`PluginFileAPI.getPageSize`). Measured with Snap: the page size alone put points 516 px to the left, the display size alone made them 37 % too large.
+Measured on a Manta (its own notes in portrait and in landscape, an A6X note):
+
+- New elements are written in the page size the host reports (`PluginFileAPI.getPageSize`; 2560 × 3414 for a Manta note in landscape).
+- Stroke points (EMR) follow the screen: they are converted with the display size, then scaled to that page size when it differs in the same orientation (an A6X page on a Manta, as in Snap).
+- Shapes and the lasso rect are read in the note's own page pixels, which differ in landscape: a circle and the lasso rect came back at 3/4 of where things are written, and dashes were drawn at 3/4 of the circle's place and size. Shapes are therefore scaled: when the selection holds strokes, by the ratio that makes the lasso rect frame the strokes and the scaled shapes (1 unless another fits clearly better); without strokes, by 4/3 on a landscape page, else not at all.
 
 ## Width units
 
