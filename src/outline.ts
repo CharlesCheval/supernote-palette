@@ -70,14 +70,11 @@ export async function pageSize(): Promise<Size | null> {
       path && page != null
         ? ok<Size>(await PluginFileAPI.getPageSize(path, page))
         : null;
-    // Only a page of another size in the same orientation: a rotated display
-    // (landscape) with a portrait page size must keep the display size alone,
-    // as before.
-    const sameOrientation =
-      validSize(own) && own.width < own.height === size.width < size.height;
+    // Any page size that differs, in either orientation: a page from another
+    // device, or a portrait page under a display reported in landscape.
+    // calibrate() decides whether it is used.
     if (
       validSize(own) &&
-      sameOrientation &&
       (own.width !== size.width || own.height !== size.height)
     ) {
       size.page = {width: own.width, height: own.height};
@@ -112,6 +109,10 @@ function convert(p: P, size: Size, mode: EmrMode): P {
       width: Math.round(size.page.width),
       height: Math.round(size.page.height),
     });
+  }
+  // Scaling the screen to the page only makes sense in the same orientation.
+  if (size.page.width < size.page.height !== size.width < size.height) {
+    throw new Error('scaled: page and display in different orientations');
   }
   return screenToPage(PointUtils.emrPoint2Android(p, display), size, size.page);
 }
@@ -155,19 +156,21 @@ export async function calibrate(
 ): Promise<void> {
   // The conversion of Palette 0.6.2 unless another one clearly fits better.
   emrMode = 'display';
-  if (!size?.page) {
-    lastCalibration = size ? `page = display ${size.width}×${size.height}` : '';
+  if (!size) {
+    lastCalibration = '';
     return;
   }
   const parts = [
-    `display ${size.width}×${size.height} · page ${size.page.width}×${size.page.height}`,
+    `display ${size.width}×${size.height} · page ${
+      size.page ? `${size.page.width}×${size.page.height}` : 'same'
+    }`,
   ];
   try {
     const rect = ok<Box>(await PluginCommAPI.getLassoRect());
     const stroke = elements.find(e => isStroke(e) && e.stroke);
     if (!rect || !stroke?.stroke) {
       lastCalibration = parts
-        .concat('no lasso rect or stroke: scaled')
+        .concat('no lasso rect or stroke: display')
         .join(' · ');
       return;
     }
@@ -184,7 +187,10 @@ export async function calibrate(
     );
     let best: {mode: EmrMode; out: number} | null = null;
     let displayOut = 0;
-    for (const mode of ['scaled', 'page', 'display'] as EmrMode[]) {
+    const modes: EmrMode[] = size.page
+      ? ['display', 'page', 'scaled']
+      : ['display'];
+    for (const mode of modes) {
       try {
         const b = boxOf(sample.map(p => convert(p, size, mode)));
         const out = overflow(b, rect);
