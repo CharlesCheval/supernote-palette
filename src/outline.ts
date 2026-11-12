@@ -83,17 +83,121 @@ export async function pageSize(): Promise<Size | null> {
 }
 
 /**
- * An EMR point in page pixels. EMR follows the screen whatever the page: it is
- * converted with the display size, then scaled to the page's own size.
- * Measured with Snap (A6X note on a Manta): the page size alone put points
- * 516 px to the left, the display size alone made them 37 % too large.
+ * How a page from another device stores its strokes' EMR points is not known
+ * for sure: Snap measured that live strokes follow the screen ("scaled":
+ * display conversion, then page scale), but Palette reads strokes saved in
+ * the note, and with that conversion its dashes still landed elsewhere on an
+ * A6X note on a Manta. So the conversion is chosen per selection, by
+ * calibrate(): the one that puts the strokes inside the lasso rect.
  */
+export type EmrMode = 'scaled' | 'page' | 'display';
+let emrMode: EmrMode = 'scaled';
+
+/** What the last calibration measured, shown in the panel (test builds). */
+export let lastCalibration = '';
+
+function convert(p: P, size: Size, mode: EmrMode): P {
+  const display = {width: size.width, height: size.height};
+  if (!size.page || mode === 'display') {
+    return PointUtils.emrPoint2Android(p, display);
+  }
+  if (mode === 'page') {
+    return PointUtils.emrPoint2Android(p, {
+      width: Math.round(size.page.width),
+      height: Math.round(size.page.height),
+    });
+  }
+  return screenToPage(PointUtils.emrPoint2Android(p, display), size, size.page);
+}
+
+/** An EMR point in page pixels, with the conversion calibrate() chose. */
 export function emrToPage(p: P, size: Size): P {
-  const q = PointUtils.emrPoint2Android(p, {
-    width: size.width,
-    height: size.height,
-  });
-  return size.page ? screenToPage(q, size, size.page) : q;
+  try {
+    return convert(p, size, emrMode);
+  } catch {
+    return convert(p, size, 'scaled'); // page size unknown to PointUtils
+  }
+}
+
+type Box = {left: number; top: number; right: number; bottom: number};
+
+const boxOf = (pts: P[]): Box => ({
+  left: Math.min(...pts.map(p => p.x)),
+  top: Math.min(...pts.map(p => p.y)),
+  right: Math.max(...pts.map(p => p.x)),
+  bottom: Math.max(...pts.map(p => p.y)),
+});
+
+/** How far a box sticks out of another (0 when inside). */
+export function overflow(b: Box, r: Box): number {
+  return (
+    Math.max(0, r.left - b.left) +
+    Math.max(0, b.right - r.right) +
+    Math.max(0, r.top - b.top) +
+    Math.max(0, b.bottom - r.bottom)
+  );
+}
+
+/**
+ * Chooses the EMR conversion for this selection: among those that can run,
+ * the one whose stroke points stick out of the lasso rect the least. Only
+ * pages from another device need it; on the device's own pages all agree.
+ */
+export async function calibrate(
+  elements: Element[],
+  size: Size | null,
+): Promise<void> {
+  emrMode = 'scaled';
+  if (!size?.page) {
+    lastCalibration = size ? `page = display ${size.width}×${size.height}` : '';
+    return;
+  }
+  const parts = [
+    `display ${size.width}×${size.height} · page ${size.page.width}×${size.page.height}`,
+  ];
+  try {
+    const rect = ok<Box>(await PluginCommAPI.getLassoRect());
+    const stroke = elements.find(e => isStroke(e) && e.stroke);
+    if (!rect || !stroke?.stroke) {
+      lastCalibration = parts
+        .concat('no lasso rect or stroke: scaled')
+        .join(' · ');
+      return;
+    }
+    const n = await stroke.stroke.points.size();
+    const raw = n ? await stroke.stroke.points.getRange(0, n) : [];
+    const sample = raw.filter(
+      (_, i) => i % Math.max(1, Math.floor(raw.length / 60)) === 0,
+    );
+    const r0 = Math.round;
+    parts.push(
+      `lasso ${r0(rect.left)},${r0(rect.top)}–${r0(rect.right)},${r0(
+        rect.bottom,
+      )}`,
+    );
+    let best: {mode: EmrMode; out: number} | null = null;
+    for (const mode of ['scaled', 'page', 'display'] as EmrMode[]) {
+      try {
+        const b = boxOf(sample.map(p => convert(p, size, mode)));
+        const out = overflow(b, rect);
+        parts.push(
+          `${mode} ${r0(b.left)},${r0(b.top)}–${r0(b.right)},${r0(b.bottom)}`,
+        );
+        if (!best || out < best.out) {
+          best = {mode, out};
+        }
+      } catch {
+        parts.push(`${mode} n/a`);
+      }
+    }
+    if (best) {
+      emrMode = best.mode;
+      parts.push(`→ ${best.mode}`);
+    }
+  } catch (e: any) {
+    parts.push(`calibration error ${e?.message ?? e}`);
+  }
+  lastCalibration = parts.join(' · ');
 }
 
 /** Screen pixels to page pixels (a page scaled to fill the screen). */

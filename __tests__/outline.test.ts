@@ -5,7 +5,7 @@ jest.mock('sn-plugin-lib', () => ({
   // Stand-in conversion: EMR / 10.
   PointUtils: {emrPoint2Android: (p: {x: number; y: number}) => ({x: p.x / 10, y: p.y / 10})},
 }));
-import {emrToPage, inPagePixels, screenToPage} from '../src/outline';
+import {emrToPage, inPagePixels, overflow, screenToPage} from '../src/outline';
 
 const size = {width: 1920, height: 2560};
 const half = (p: {x: number; y: number}) => ({x: p.x / 10, y: p.y / 10});
@@ -32,4 +32,10 @@ test('EMR to page pixels: display conversion, then the page scale only when it d
   expect(emrToPage({x: 5670, y: 7680}, {width: 1920, height: 2560})).toEqual({x: 567, y: 768});
   const q = emrToPage({x: 5670, y: 7680}, {width: 1920, height: 2560, page: {width: 1404, height: 1872}});
   expect(q.x).toBeCloseTo(414.6, 1);
+});
+
+test('calibration score: how far a box sticks out of the lasso rect', () => {
+  const lasso = {left: 100, top: 100, right: 500, bottom: 400};
+  expect(overflow({left: 120, top: 110, right: 480, bottom: 390}, lasso)).toBe(0);
+  expect(overflow({left: 50, top: 110, right: 560, bottom: 390}, lasso)).toBe(110);
 });

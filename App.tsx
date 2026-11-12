@@ -53,7 +53,9 @@ function describe(s: Summary | null): string {
   if (s.others) {
     parts.push(`${s.others} other (unchanged)`);
   }
-  return `${parts.join(' · ')} — ${s.range} mm · ${s.colors}`;
+  return `${parts.join(' · ')} — ${s.range} mm · ${s.colors}${
+    s.diag && s.diag.includes('lasso') ? `\n${s.diag}` : ''
+  }`;
 }
 
 /** Dash pattern preview: [length, gap] pairs drawn as small bars (length 0 = dot). */
@@ -454,7 +456,7 @@ function App(): React.JSX.Element {
           ))}
         </ToolRow>
 
-        <Text style={styles.info} numberOfLines={1}>
+        <Text style={styles.info} numberOfLines={4}>
           {plan
             ? 'Picking: tap options to add or remove them, then Apply.'
             : describe(summary)}

@@ -9,6 +9,8 @@ import {
   isShape,
   isStroke,
   ok,
+  calibrate,
+  lastCalibration,
   outlineOf,
   pageSize,
   withTimeout,
@@ -45,6 +47,8 @@ export type Summary = {
   penWidth: number | null;
   /** The selection was moved or resized and is still held by the lasso. */
   moved: boolean;
+  /** Coordinate calibration on pages from another device (test builds). */
+  diag?: string;
   error?: string;
 };
 
@@ -442,6 +446,10 @@ export async function readSummary(): Promise<Summary> {
     lassoMoved(),
   ]);
   const targets = elements.filter(e => isStroke(e) || isShape(e));
+  // Never lets the panel fail: the default conversion stays if it does.
+  await pageSize()
+    .then(size => calibrate(elements, size))
+    .catch(() => undefined);
   const summary: Summary = {
     strokes: elements.filter(isStroke).length,
     shapes: elements.filter(isShape).length,
@@ -453,6 +461,7 @@ export async function readSummary(): Promise<Summary> {
     penWidth: ok<{width: number}>(pen)?.width ?? null,
     moved,
     error,
+    diag: lastCalibration,
   };
   release(elements);
   return summary;
