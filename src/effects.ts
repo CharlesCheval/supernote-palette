@@ -44,6 +44,8 @@ import {
   describeElement,
   outlineOf,
   pageSize,
+  scaled,
+  scaledLength,
   styleOf,
 } from './outline';
 
@@ -722,9 +724,9 @@ async function perfectShape(
     return {
       shape: {
         kind: 'ellipse',
-        c: g.ellipseCenterPoint,
-        rx: g.ellipseMajorAxisRadius / 2,
-        ry: g.ellipseMinorAxisRadius / 2,
+        c: scaled(g.ellipseCenterPoint),
+        rx: scaledLength(g.ellipseMajorAxisRadius / 2),
+        ry: scaledLength(g.ellipseMinorAxisRadius / 2),
         angle: g.ellipseAngle,
       },
       inkWidth,

@@ -1,11 +1,12 @@
+let mockRect: any = null;
 jest.mock('sn-plugin-lib', () => ({
   Element: {TYPE_STROKE: 0, TYPE_GEO: 700},
-  PluginCommAPI: {},
+  PluginCommAPI: {getLassoRect: jest.fn(async () => ({success: !!mockRect, result: mockRect}))},
   PluginFileAPI: {},
   // Stand-in conversion: EMR / 10.
   PointUtils: {emrPoint2Android: (p: {x: number; y: number}) => ({x: p.x / 10, y: p.y / 10})},
 }));
-import {emrToPage, inPagePixels, overflow, screenToPage} from '../src/outline';
+import {calibrate, emrToPage, inPagePixels, outlineOf, overflow, screenToPage} from '../src/outline';
 
 const size = {width: 1920, height: 2560};
 const half = (p: {x: number; y: number}) => ({x: p.x / 10, y: p.y / 10});
@@ -40,4 +41,24 @@ test('calibration score: how far a box sticks out of the lasso rect', () => {
   const lasso = {left: 100, top: 100, right: 500, bottom: 400};
   expect(overflow({left: 120, top: 110, right: 480, bottom: 390}, lasso)).toBe(0);
   expect(overflow({left: 50, top: 110, right: 560, bottom: 390}, lasso)).toBe(110);
+});
+
+test('landscape Manta note: a circle read at 3/4 of its place is scaled to the lasso (measured)', async () => {
+  // Read back in portrait page pixels: centre (1051, 1195), radius 100 (fields hold twice).
+  const circle: any = {
+    type: 700,
+    geometry: {type: 'GEO_circle', ellipseCenterPoint: {x: 1051, y: 1195}, ellipseMajorAxisRadius: 200, ellipseMinorAxisRadius: 200, ellipseAngle: 0, penWidth: 300, penColor: 0, penType: 10},
+  };
+  const size = {width: 2560, height: 3414};
+  // The lasso around it where it shows: 4/3 of the read place.
+  mockRect = {left: ((1051 - 100) * 4) / 3 - 10, top: ((1195 - 100) * 4) / 3 - 10, right: ((1051 + 100) * 4) / 3 + 10, bottom: ((1195 + 100) * 4) / 3 + 10};
+  await calibrate([circle], size);
+  const o = await outlineOf(circle, size);
+  const xs = o!.points.map(p => p.x);
+  expect(Math.min(...xs)).toBeCloseTo(((1051 - 100) * 4) / 3, 0);
+  // Back to a selection where read and lasso agree: no scaling.
+  mockRect = {left: 941, top: 1085, right: 1161, bottom: 1305};
+  await calibrate([circle], size);
+  const o2 = await outlineOf(circle, size);
+  expect(Math.min(...o2!.points.map(p => p.x))).toBeCloseTo(951, 0);
 });

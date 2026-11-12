@@ -145,6 +145,67 @@ export function overflow(b: Box, r: Box): number {
   );
 }
 
+/** Ratios between the page sizes in use (portrait and landscape, Manta and A5X/A6X). */
+const SCALES = [
+  1,
+  4 / 3,
+  3 / 4,
+  1920 / 1404,
+  1404 / 1920,
+  2560 / 1404,
+  1404 / 2560,
+];
+
+/**
+ * The factor from read to written coordinates (readScale): the one that puts
+ * the selection's outlines inside the lasso rect, 1 unless another clearly
+ * fits better. Scaling is about the page origin, as measured.
+ */
+async function calibrateScale(
+  elements: Element[],
+  size: Size,
+  rect: Box,
+  parts: string[],
+): Promise<void> {
+  readScale = 1;
+  const pts: P[] = [];
+  for (const e of elements.filter(x => isStroke(x) || isShape(x)).slice(0, 8)) {
+    const o = await rawOutlineOf(e, size);
+    if (o) {
+      pts.push(...o.points);
+    }
+  }
+  if (!pts.length) {
+    parts.push('no outline: scale 1');
+    return;
+  }
+  const b = boxOf(pts);
+  const r0 = Math.round;
+  parts.push(`read ${r0(b.left)},${r0(b.top)}–${r0(b.right)},${r0(b.bottom)}`);
+  const fit = (k: number) =>
+    overflow(
+      {
+        left: b.left * k,
+        top: b.top * k,
+        right: b.right * k,
+        bottom: b.bottom * k,
+      },
+      rect,
+    );
+  const base = fit(1);
+  let best = {k: 1, out: base};
+  for (const k of SCALES) {
+    const out = fit(k);
+    if (out < best.out) {
+      best = {k, out};
+    }
+  }
+  if (best.k !== 1 && base > 20 && best.out < base / 2) {
+    readScale = best.k;
+  }
+  parts.push(`scale ${readScale === 1 ? '1' : readScale.toFixed(3)}`);
+}
+
 /**
  * Chooses the EMR conversion for this selection: among those that can run,
  * the one whose stroke points stick out of the lasso rect the least. Only
@@ -156,6 +217,7 @@ export async function calibrate(
 ): Promise<void> {
   // The conversion of Palette 0.6.2 unless another one clearly fits better.
   emrMode = 'display';
+  readScale = 1;
   if (!size) {
     lastCalibration = '';
     return;
@@ -167,11 +229,19 @@ export async function calibrate(
   ];
   try {
     const rect = ok<Box>(await PluginCommAPI.getLassoRect());
+    if (!rect) {
+      lastCalibration = parts.concat('no lasso rect: unchanged').join(' · ');
+      return;
+    }
     const stroke = elements.find(e => isStroke(e) && e.stroke);
-    if (!rect || !stroke?.stroke) {
-      lastCalibration = parts
-        .concat('no lasso rect or stroke: display')
-        .join(' · ');
+    if (!stroke?.stroke) {
+      parts.push(
+        `lasso ${Math.round(rect.left)},${Math.round(rect.top)}–${Math.round(
+          rect.right,
+        )},${Math.round(rect.bottom)}`,
+      );
+      await calibrateScale(elements, size, rect, parts);
+      lastCalibration = parts.join(' · ');
       return;
     }
     const n = await stroke.stroke.points.size();
@@ -218,6 +288,7 @@ export async function calibrate(
       emrMode = best.mode;
     }
     parts.push(`→ ${emrMode}`);
+    await calibrateScale(elements, size, rect, parts);
   } catch (e: any) {
     parts.push(`calibration error ${e?.message ?? e}`);
   }
@@ -253,7 +324,29 @@ export function styleOf(e: Element): Style {
 }
 
 /** An element's outline (its centre line) in page pixels, or null when it cannot be read. */
+/**
+ * Factor from the coordinates elements are read in to those new elements are
+ * written in, set by calibrate(). 1 except when they differ (measured: a Manta
+ * note in landscape, page reported 2560×3414: a circle read back in portrait
+ * page pixels, its dashes drawn at 3/4 of its place and size).
+ */
+let readScale = 1;
+
+/** A point or a length read from an element, in the pixels new elements are written in. */
+export const scaled = (p: P): P =>
+  readScale === 1 ? p : {x: p.x * readScale, y: p.y * readScale};
+export const scaledLength = (l: number) => l * readScale;
+
+/** An element's outline (its centre line) in the pixels new elements are written in. */
 export async function outlineOf(
+  e: Element,
+  size: Size | null,
+): Promise<Outline | null> {
+  const o = await rawOutlineOf(e, size);
+  return o && readScale !== 1 ? {...o, points: o.points.map(scaled)} : o;
+}
+
+async function rawOutlineOf(
   e: Element,
   size: Size | null,
 ): Promise<Outline | null> {
@@ -329,7 +422,7 @@ export async function contourOf(e: Element, size: Size | null): Promise<P[][]> {
     const out: P[][] = [];
     let k = 0;
     for (const l of loops) {
-      out.push(px.slice(k, k + l.length));
+      out.push(px.slice(k, k + l.length).map(scaled));
       k += l.length;
     }
     return out;
