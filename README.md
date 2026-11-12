@@ -61,6 +61,10 @@ The native element cache is cleared before every read of the lasso (it could han
 
 In PDF documents, elements deleted or modified through the SDK do not stay that way (measured: they come back later, sometimes elsewhere on the page). Palette therefore only offers what adds lines or goes through the lasso: **fills, hatching, and the width or colour of a single shape**. Dashes and changes to strokes or several elements show *Not available in PDFs (unstable behavior).*
 
+## Pages from another device
+
+Pen (EMR) coordinates follow the screen, whatever the page. A page made for another device (an A6X note on a Manta) is scaled to fill the screen, and elements are written in the page's own pixels: stroke points are converted with the display size (`getPageDisplaySize`), then scaled by page / display (`PluginFileAPI.getPageSize`). Measured with Snap: the page size alone put points 516 px to the left, the display size alone made them 37 % too large.
+
 ## Width units
 
 The SDK does not document the unit of `thickness` / `penWidth`, and it is not linear. The table in `src/widths.ts` was measured on a Manta by drawing with each pen size:
@@ -88,7 +92,7 @@ npx jest
 
 ## Releasing
 
-Bump `versionName` **and** `versionCode` in `PluginConfig.json` (the device only upgrades when `versionCode` increases), commit, then push a matching tag (`git tag v<versionName> && git push origin v<versionName>`), or run the **Release** workflow by hand on `main` (Actions → Release → Run workflow): the tag is then made from `versionName`.
+Bump `versionName` **and** `versionCode` in `PluginConfig.json` (the device only upgrades when `versionCode` increases) and update `RELEASE_NOTES.md` (it becomes the release's description), commit, then push a matching tag (`git tag v<versionName> && git push origin v<versionName>`), or run the **Release** workflow by hand on `main` (Actions → Release → Run workflow): the tag is then made from `versionName`.
 
 GitHub Actions runs the tests, builds the plugin and attaches it to the release as `Palette.snplg`.
 

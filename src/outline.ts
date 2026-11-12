@@ -1,4 +1,4 @@
-import {Element, PluginCommAPI, PointUtils} from 'sn-plugin-lib';
+import {Element, PluginCommAPI, PluginFileAPI, PointUtils} from 'sn-plugin-lib';
 import {P, ellipsePoints, range} from './patterns';
 
 /**
@@ -41,15 +41,71 @@ export function withTimeout<T>(
   });
 }
 
-export type Size = {width: number; height: number};
+/**
+ * The display size (EMR points are converted with it), and the page's own
+ * size when it differs (a page made for another device, scaled to fill the
+ * screen: an A6X note on a Manta).
+ */
+export type Size = {
+  width: number;
+  height: number;
+  page?: {width: number; height: number};
+};
 export type Style = {penType: number; penColor: number; penWidth: number};
 export type Outline = {points: P[]; style: Style};
 
+const validSize = (s: any): s is {width: number; height: number} =>
+  !!s && s.width > 1 && s.height > 1;
+
 export async function pageSize(): Promise<Size | null> {
   const s = ok<Size>(await PluginCommAPI.getPageDisplaySize());
-  return s && s.width > 1 && s.height > 1
-    ? {width: Math.round(s.width), height: Math.round(s.height)}
-    : null;
+  if (!validSize(s)) {
+    return null;
+  }
+  const size: Size = {width: Math.round(s.width), height: Math.round(s.height)};
+  try {
+    const path = ok<string>(await PluginCommAPI.getCurrentFilePath());
+    const page = ok<number>(await PluginCommAPI.getCurrentPageNum());
+    const own =
+      path && page != null
+        ? ok<Size>(await PluginFileAPI.getPageSize(path, page))
+        : null;
+    if (
+      validSize(own) &&
+      (own.width !== size.width || own.height !== size.height)
+    ) {
+      size.page = {width: own.width, height: own.height};
+    }
+  } catch {
+    // no page size: the display size is the page's (as before)
+  }
+  return size;
+}
+
+/**
+ * An EMR point in page pixels. EMR follows the screen whatever the page: it is
+ * converted with the display size, then scaled to the page's own size.
+ * Measured with Snap (A6X note on a Manta): the page size alone put points
+ * 516 px to the left, the display size alone made them 37 % too large.
+ */
+export function emrToPage(p: P, size: Size): P {
+  const q = PointUtils.emrPoint2Android(p, {
+    width: size.width,
+    height: size.height,
+  });
+  return size.page ? screenToPage(q, size, size.page) : q;
+}
+
+/** Screen pixels to page pixels (a page scaled to fill the screen). */
+export function screenToPage(
+  q: P,
+  display: {width: number; height: number},
+  page: {width: number; height: number},
+): P {
+  return {
+    x: (q.x * page.width) / display.width,
+    y: (q.y * page.height) / display.height,
+  };
 }
 
 export function styleOf(e: Element): Style {
@@ -100,7 +156,7 @@ export async function outlineOf(
       return null;
     }
     const emr = await e.stroke.points.getRange(0, n);
-    return {points: emr.map(p => PointUtils.emrPoint2Android(p, size)), style};
+    return {points: emr.map(p => emrToPage(p, size)), style};
   }
   return null;
 }
@@ -139,7 +195,7 @@ export async function contourOf(e: Element, size: Size | null): Promise<P[][]> {
     if (!all.length) {
       return [];
     }
-    const conv = (p: P) => PointUtils.emrPoint2Android(p, size);
+    const conv = (p: P) => emrToPage(p, size);
     const px = inPagePixels(all, size, conv);
     // Split the converted points back into their loops.
     const out: P[][] = [];
